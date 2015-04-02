@@ -56,8 +56,6 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
   std::vector<std::vector<ilp::variable_idx_t> > varGoldNodes;
   int                                            numFound = 0;
 
-  (*pLog) << "<label-match-log>" << std::endl;
-  
   // Work on all possible combinations.
   util::combination(matches, [&](const std::vector<int> &indices){
       hash_map<term_t, hash_set<term_t> > eqMap;
@@ -86,37 +84,37 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
 
       //
       // Write variable-matching log.
+      bool fPossible = true;
+      
       (*pLog) << "<variables>" << std::endl;
       for(auto it: eqMap) {
         (*pLog) << "<match target=\"" << it.first.string() << "\">";
           
-        for(auto it2: it.second)
-          (*pLog) << it2.string() << ",";
-        
-        (*pLog) << "</match>" << std::endl;
-      }
-      (*pLog) << "</variables>" << std::endl;
-
-      //
-      // Check whether the equality conditions are in the proofgraph.
-      bool fPossible = true;
-      
-      for(auto it: eqMap) {
         //
         // All the pairwise combination of the variables in it.second
         // must be possible. In the below, check the possibility on
         // proof graph created so far.
         for(auto &it2: it.second) {
-          for(auto &it3: it.second) {
+          for(auto &it3: it.second) {            
             if(it2.string() >= it3.string()) continue;
+
+            (*pLog) << it2.string() << "=" << it3.string() << ",";
             
+            //
+            // Check whether the equality conditions are in the proofgraph.
             pg::node_idx_t subnode = graph->find_sub_node(it2, it3);
             conditionedNodes.push_back(subnode);
              
-            if(-1 == subnode) { fPossible = false; break; }
+            if(-1 == subnode) {
+              (*pLog) << "... impossible., ";
+              fPossible = false;
+            }
           }
         }
+        
+        (*pLog) << "</match>" << std::endl;
       }
+      (*pLog) << "</variables>" << std::endl;
 
       //
       // Create the condition.
@@ -126,7 +124,8 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
         (*pLog) << "<proofgraph-checking>" << std::endl;
         
         for(auto ni: conditionedNodes) {
-          (*pLog) << "<node id=\""<< ni <<"\">";
+          (*pLog) << "<node target=\"" << graph->node(ni).to_string() << "\""
+                  << " is_transitive_eq=\"" << graph->node(ni).is_transitive_equality_node() << "\">";
           
           const hash_set<pg::node_idx_t>   *pHypernodes = graph->search_hypernodes_with_node(ni);
           std::vector<ilp::variable_idx_t> varsHN;
@@ -180,8 +179,6 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
       
       return true;
     });
-
-  (*pLog) << "</label-match-log>" << std::endl;
 
   if(0 == numFound)
     (*pLog) << "<no-match />" << std::endl;

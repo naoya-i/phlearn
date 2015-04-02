@@ -14,24 +14,21 @@ print """<phillip>
 </configure>                                                                                                                                               
 """
 
-if len(sys.argv) == 4:
+prediction = sys.argv[4] if 5 == len(sys.argv) else "CP"
+
+prediction = prediction.replace("CP", "current-prediction")
+prediction = prediction.replace("LVC", "latent-variable-completion")
+
+try:
 	print etree.tostring(
 		xml.xpath(
-			"/phillip-learn/round[@iteration='%s']/%s/proofgraph" % (
+			"/phillip-learn/round[@iteration='%s' and @observation='%s']/%s/proofgraph" % (
 				sys.argv[2],
-				sys.argv[3]))[0])
+				sys.argv[3],
+				prediction))[0])
 
-else:
-	try:
-		print etree.tostring(
-			xml.xpath(
-				"/phillip-learn/round[@iteration='%s' and @observation='%s']/%s/proofgraph" % (
-					sys.argv[2],
-					sys.argv[3],
-					sys.argv[4]))[0])
-
-	except IndexError:
-		print ""
-		print >>sys.stderr, "Oh..."
+except IndexError:
+	print ""
+	print >>sys.stderr, "Oh..."
 	
 print "</phillip>"

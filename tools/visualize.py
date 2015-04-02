@@ -68,6 +68,30 @@ def html(fn, obs_name, itr):
 	tree_cp = _createTree(xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/current-prediction/proofgraph" % (obs_name, itr))[0])
 	tree_lvc = _createTree(xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/latent-variable-completion/proofgraph" % (obs_name, itr))[0])
 
+	#
+	lms = []
+
+	def _node2repr(_x):
+		return _x.attrib["target"] + ("" if "0" == _x.attrib["is_transitive_eq"] else " (TRANSEQ)")
+		
+	for lblno, find_label in enumerate(xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/latent-variable-completion/find-label" % (obs_name, itr))):
+		lms += ["<pre>%s. %s</pre>" % (1+lblno, find_label.attrib["label"])]
+		lms += ["<table class=\"table table-bordered\">"]
+
+		lms += ["<tr>"]
+		lms += ["<th>#</th>"]
+		lms += ["<th>Matched nodes</th>"]
+		lms += ["</tr>"]
+			
+		for patno, pat in enumerate(find_label.xpath("./pattern")):
+			lms += ["<tr>"]
+			lms += ["<th>%s</th>" % (1+patno)]
+			lms += ["<td><pre>%s</pre></td>" % ", ".join([_node2repr(x) for x in pat.xpath("./proofgraph-checking/node")])]
+			lms += ["</tr>"]
+				
+		lms += ["</table>"]
+			
+	# Weight updates.
 	wupdates = {}
 	
 	for upd in xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/weight-update/update" % (obs_name, itr)):
@@ -119,6 +143,7 @@ def html(fn, obs_name, itr):
 		"weightupdate":  "".join(wupdates),
 		"sc_cp":         sc_cp,
 		"sc_lvc":         sc_lvc,
+		"lms":           "".join(lms),
 		}
 	
 	return """
@@ -177,7 +202,7 @@ def html(fn, obs_name, itr):
 	
 	
 	<h2><span class="label label-default">Label matching log</span></h2>
-	blahblah
+	%(lms)s
 	
 	</div>
 
