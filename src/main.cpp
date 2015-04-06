@@ -8,7 +8,7 @@
 #include "ilp_loglinear.h"
 #include "storage.h"
 
-#include "scw.h"
+#include "weight_update.h"
 
 const float fDefaultC = 0.5;
 const float fDefaultEta = 0.75;
@@ -28,7 +28,7 @@ void _printWeightVector(int n, const util::sparse_vector_t &vMean, const util::s
 }
 
 bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, const hash_set<pg::hypernode_idx_t> &unihns, const lf::logical_function_t &lfGold,
-                      std::vector<ilp::variable_idx_t> *pOut, std::ostream *pLog) {
+                      std::vector<ilp::variable_idx_t> *pOut, bool f_exclude_transitiveeq, std::ostream *pLog) {
   assert(lfGold.is_operator(lf::OPR_AND));
   
   // Convert the solution into a set of literals.
@@ -103,6 +103,11 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
             //
             // Check whether the equality conditions are in the proofgraph.
             pg::node_idx_t subnode = graph->find_sub_node(it2, it3);
+
+            if(f_exclude_transitiveeq && -1 != subnode) {
+              if(graph->node(subnode).is_transitive_equality_node()) subnode = -1;
+            }
+            
             conditionedNodes.push_back(subnode);
              
             if(-1 == subnode) {
@@ -300,7 +305,7 @@ public:
     
     for(auto &lfGold: lfsGold) {
       (*pLog) << "<label>" << lfGold.to_string() << "</label>" << std::endl;
-      if(_getGoldSetsVars(graph, NULL, unihns, lfGold, NULL, &trash)) numHits++;
+      if(_getGoldSetsVars(graph, NULL, unihns, lfGold, NULL, flag("learn_exclude_transieq"), &trash)) numHits++;
     }
 
     if(0 == numHits) {
@@ -309,6 +314,9 @@ public:
     }
 
     (*pLog) << "<label-status>potential-gold-literal-found</label-status>" << std::endl;
+
+    if(flag("learn_label_check_only"))
+      return;
     
     // Perform inference.
     execute_convertor();
@@ -345,6 +353,9 @@ public:
     (*pLog) <<  "<result>" << numCorrects << "</result>" << std::endl;
     (*pLog) << "</current-prediction>" << std::endl;
 
+    if("structured_perceptron" == param("learn_algo") && 0 < numCorrects)
+      return;
+      
     // Create ILP variables expressing inclusion of gold literals.
     (*pLog) << "<latent-variable-completion>" << std::endl;
     
@@ -355,7 +366,7 @@ public:
     
       (*pLog) << "<find-label label=\"" << lfGold.to_string() << "\">" << std::endl;
       
-      if(_getGoldSetsVars(graph, prob, unihns, lfGold, &vCondGoldSets, pLog))
+      if(_getGoldSetsVars(graph, prob, unihns, lfGold, &vCondGoldSets, flag("learn_exclude_transieq"), pLog))
         vCondLabelSatisfied.push_back(util::createConditionedIndicator(prob, vCondGoldSets, std::vector<int>(vCondGoldSets.size(), 1), false));
 
       (*pLog) << "</find-label>" << std::endl;
@@ -394,14 +405,26 @@ public:
     if(0 == numCorrects) std::swap(vCompetitor, vGold);
   
     (*pLog) << "<weight-update>" << std::endl;
-  
-    float loss = scw::updateWeightVector(&vecMean, &vecVariance, vGold, vCompetitor,
-                                         param_float("learn_C",   fDefaultC),
-                                         param_float("learn_eta", fDefaultEta),
-                                         param_float("learn_initial_var", fInitialVar),
-                                         scw::SCW_I,
-                                         stFt,
-                                         pLog);
+
+    float loss;
+
+    if("exact_scw_" == param("learn_algo")) {
+      loss = scw::updateWeightVector(&vecMean, &vecVariance, vGold, vCompetitor,
+                                     param_float("learn_C",   fDefaultC),
+                                     param_float("learn_eta", fDefaultEta),
+                                     param_float("learn_initial_var", fInitialVar),
+                                     scw::SCW_I,
+                                     stFt,
+                                     pLog);
+      
+    } else if("structured_perceptron" == param("learn_algo")) {
+      loss = sp::updateWeightVector(&vecMean, vGold, vCompetitor,
+                                    param_float("learn_eta", fDefaultEta),
+                                    stFt,
+                                    pLog);
+      
+    }
+      
     
     (*pLog) << "<loss>" << loss << "</loss>" << std::endl;
     (*pLog) << "</weight-update>" << std::endl;

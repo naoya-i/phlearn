@@ -4,7 +4,8 @@ import sys
 import re
 import collections
 
-# USAGE: <filename> <observaiton>
+# USAGE: <filename> <observaiton> <itr> <fvdict>
+
 def _createTree(xml):
 	ret = []
 	nodes = collections.defaultdict(list)
@@ -47,8 +48,9 @@ def _createTree(xml):
 		
 	return ret
 	
-def html(fn, obs_name, itr):
-	xml = etree.parse(fn)
+def html(fn, obs_name, itr, fvdict):
+	xml    = etree.parse(fn)
+	fvdict = dict([tuple(x.split("\t")) for x in open(fvdict)])
 
 	# Counting the list of observations and iteration.
 	list_itr = xml.xpath("/phillip-learn/round[@observation='%s']/@iteration" % obs_name)
@@ -123,7 +125,7 @@ def html(fn, obs_name, itr):
 		
 	wupdates = [
 		"<tr><th>%s</th><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % (
-			fk, _labeling(vedict_cp.has_key(fk) and vedict_lvc.has_key(fk)), vedict_cp.get(fk, ""), vedict_lvc.get(fk, ""), _update(wupdates.get(fk, "")),
+			fvdict.get(fk, fk), _labeling(vedict_cp.has_key(fk) and vedict_lvc.has_key(fk)), vedict_cp.get(fk, ""), vedict_lvc.get(fk, ""), _update(wupdates.get(fk, "")),
 		) for fk in fks
 		]
 	
@@ -227,4 +229,4 @@ def html(fn, obs_name, itr):
 </html>""" % dct
 
 if "__main__" == __name__:
-	print html(sys.argv[1], sys.argv[2], sys.argv[3])
+	print html(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])

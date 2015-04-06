@@ -4,10 +4,13 @@
 #include "storage.h"
 #include "normsinv.h"
 
-#include "scw.h"
+#include "weight_update.h"
 
 namespace scw {
-  float updateWeightVector(util::sparse_vector_t *pOutMean, util::sparse_vector_t *pOutVariance, const util::sparse_vector_t &vGold, const util::sparse_vector_t &vCompetitor, float C, float eta, float initVar, update_type_t typeUpdate, const storage_t<std::string> &stTranslator, std::ostream *pLog) {
+  float updateWeightVector(util::sparse_vector_t *pOutMean, util::sparse_vector_t *pOutVariance,
+                           const util::sparse_vector_t &vGold, const util::sparse_vector_t &vCompetitor,
+                           float C, float eta, float initVar, update_type_t typeUpdate, const storage_t<std::string> &stTranslator,
+                           std::ostream *pLog) {
     float m, n, v, gamma, phi, u, _u, loss;
     float psi, zeta;
     float alpha, beta;
@@ -62,6 +65,37 @@ namespace scw {
 
       if(0.0f != vDiff[it]) 
         (*pLog) << format("after_m=\"%.2f\" after_v=\"%.2f\" />", (*pOutMean)[it], (*pOutVariance)[it]) << std::endl;
+    }
+
+    return loss;
+  }
+}
+
+namespace sp {
+  float updateWeightVector(util::sparse_vector_t *pOutMean,
+                           const util::sparse_vector_t &vGold, const util::sparse_vector_t &vCompetitor,
+                           float eta, const storage_t<std::string> &stTranslator,
+                           std::ostream *pLog) {
+    float loss;
+    hash_set<int> featureSet;
+
+    auto get = [](util::sparse_vector_t v, int i, float def = 0.0){ return v.end() != v.find(i) ? v.at(i) : def; };
+  
+    for(auto it: *pOutMean)     featureSet.insert(it.first);
+    for(auto it: vGold)         featureSet.insert(it.first);
+    for(auto it: vCompetitor)   featureSet.insert(it.first);
+
+    loss = scw::innerProduct(vGold, *pOutMean) - scw::innerProduct(vCompetitor, *pOutMean);
+    
+    for(auto it: featureSet) {
+      float diff = get(vGold, it) - get(vCompetitor, it);
+            
+      if(0.0f != diff) {
+        (*pLog) << format("<update id=\"%s\" before_m=\"%.2f\"", format("%d", it).c_str(),
+                          (*pOutMean)[it]) << " ";
+        (*pOutMean)[it] += eta * diff;
+        (*pLog) << format("after_m=\"%.2f\" after_v=\"%.2f\" />", (*pOutMean)[it]) << std::endl;
+      }
     }
 
     return loss;

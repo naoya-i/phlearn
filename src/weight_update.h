@@ -24,3 +24,12 @@ namespace scw {
   }
   
 }
+
+namespace sp {
+  float updateWeightVector(util::sparse_vector_t       *pOutMean,
+                           const util::sparse_vector_t  &vGold, const util::sparse_vector_t &vCompetitor,
+                           float eta,
+                           const storage_t<std::string> &stTranslator,
+                           std::ostream                 *pLog);
+  
+}

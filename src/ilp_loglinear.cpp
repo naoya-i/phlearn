@@ -35,6 +35,13 @@ namespace phil
       _injectSV(stFv, n.arity(), pOut);
     }
 
+    void _createFeatureVectorOfUnification(const pg::proof_graph_t* graph, const storage_t<sparse_vector_storage_t> &stFv, util::sparse_vector_t *pOut, const pg::node_t &nSmaller, const pg::node_t &nLarger) {
+      print_console("  --");
+      print_console("  UNI:    " + nSmaller.arity());
+
+      _injectSV(stFv, "U:" + nSmaller.arity(), pOut);
+    }
+    
     void _createFeatureVectorOfAxiom(const pg::proof_graph_t* graph, const storage_t<sparse_vector_storage_t> &stFv, util::sparse_vector_t *pOut, const lf::axiom_t &axiom, const pg::node_t &n) {
       print_console("  --");
       print_console("  SELECT: " + n.to_string());
@@ -132,6 +139,25 @@ namespace phil
       return ret;
     }
 
+    float _getScoreOfUnification(const pg::proof_graph_t *graph, const util::sparse_vector_t &wv, const storage_t<sparse_vector_storage_t> &stFv,
+                                 const pg::node_t &nSmaller, const pg::node_t &nLarger, util::sparse_vector_t *pOutFV) {
+      float               ret = 0.0;
+
+      assert(NULL != pOutFV);
+      
+      // Create the feature vetor.
+      print_console("-- fv: " + nSmaller.to_string() + "," + nLarger.to_string());
+      _createFeatureVectorOfUnification(graph, stFv, pOutFV, nSmaller, nLarger);
+        
+      // Calculate the weighted score.
+      for(auto it: *pOutFV) {
+        auto w = wv.find(it.first);
+        ret += (wv.end() != w ? w->second : 0.0) * it.second;
+      }
+
+      return ret;
+    }
+    
     ilp::variable_idx_t _getNodeVar(ilp::ilp_problem_t *prob, pg::node_idx_t ni) {
       ilp::variable_idx_t var = prob->find_variable_with_node(ni);
       return -1 == var ? prob->add_variable_of_node(ni, 0.0) : var;
@@ -207,6 +233,7 @@ namespace phil
       if(m_prob->is_timeout()) return m_prob;
       
       hash_map<pg::node_idx_t, ilp::variable_idx_t> node2var;
+      hash_map<pg::node_idx_t, ilp::variable_idx_t> uni2var;
 
       for(auto i=0; i<graph->edges().size(); i++) {
         _doubleImplication(m_prob, graph, graph->edge(i).head());
@@ -254,10 +281,16 @@ namespace phil
               hypernodesTail[0] : hypernodesTail[1];
             std::vector<ilp::variable_idx_t> vConditionVars;
             std::vector<int>                 vConditionSigns;
+            std::string                      e_str;
 
             if(largerNode != node.index()) {
               vConditionSigns.push_back(1);
               vConditionVars.push_back(_getNodeVar(m_prob, largerNode));
+              e_str += graph->node(largerNode).to_string();
+              
+              vConditionSigns.push_back(1);
+              vConditionVars.push_back(_getNodeVar(m_prob, node.index()));
+              e_str += "=>" + graph->node(node.index()).to_string();
 
               // Add equalities.
               if(-1 != e.head()) { // For the case like: {} => {p(u), p(v)}
@@ -267,11 +300,17 @@ namespace phil
                 }
               }
 
-              ilp::variable_idx_t varFI = util::createConditionedIndicator(m_prob, vConditionVars, vConditionSigns, true);
+              ilp::variable_idx_t varFI = util::createConditionedIndicator(m_prob, vConditionVars, vConditionSigns, true, "UE_" + e_str);
               vFeatureConditionSigns.push_back(-1);
               vFeatureConditionVars.push_back(varFI);
+
+              float score         = _getScoreOfUnification(graph, m_wv, m_stFv, node, graph->node(largerNode), &m_fvMap[varFI]);
+              m_prob->variable(varFI).set_coefficient(score);
+              m_scores[varFI]     = score;
+              uni2var[largerNode] = varFI;
               
             }
+            
           } else {
             vFeatureConditionSigns.push_back(-1);
             vFeatureConditionVars.push_back(_getHypernodeVar(m_prob, e.head()));
@@ -331,50 +370,5 @@ namespace phil
   }  
 }
 
-    // void _addConstraintsForConstants(const pg::proof_graph_t* graph, ilp::ilp_problem_t *prob) {
-    //   util::equivalence_class_t eqc;
-      
-    //   for(auto node: graph->nodes()) {
-    //     if(node.is_equality_node())
-    //       eqc.addEquality(node.literal().terms[0], node.literal().terms[1]);
-    //   }
-
-    //   eqc.updateClusters();
-
-    //   for(auto it: eqc.edges()) {
-    //     if(it.first.is_constant()) continue;
-          
-    //     // Impose mutual exclusive constraints if the cluster has
-    //     // more than two constants.
-    //     print_console(it.first.string() + ": MX: ");
-          
-    //     ilp::constraint_t conmx("", ilp::OPR_LESS_EQ, 1);
-
-    //     for(auto t: it.second) {
-    //       print_console(t.string());
-    //       ilp::variable_idx_t var = _getNodeVar(prob, graph->find_sub_node(it.first, t));
-    //       if(t.is_constant() && -1 != var) {conmx.add_term(var, 1);}
-    //     }
-
-    //     if(1 < conmx.terms().size())
-    //       prob->add_constraint(conmx);
-    //   }
-    // }
-
-
-    // void _createFeatureVectorOfEq(const pg::proof_graph_t* graph, const storage_t<sparse_vector_storage_t> &stFv, util::sparse_vector_t *pOut, const pg::node_t &n) {
-    //   print_console("  --");
-    //   print_console("  EQ:    " + n.to_string());
-
-    // }
-    
-    // void _createFeatureVectorOfUnificationAxiom(const pg::proof_graph_t* graph, const storage_t<sparse_vector_storage_t> &stFv, util::sparse_vector_t *pOut, const pg::node_t &n) {
-    //   print_console("  --");
-    //   print_console("  UNI:    " + n.to_string());
-    //   print_console("  UNI:    " + n.arity());
-      
-    //   _injectSV(stFv, "U:" + n.arity(), pOut);
-    //   _injectSV(stFv, "U:*", pOut);
-    // }
     
 
