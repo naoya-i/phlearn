@@ -94,6 +94,14 @@ namespace sp {
         (*pLog) << format("<update id=\"%s\" before_m=\"%.2f\"", format("%d", it).c_str(),
                           (*pOutMean)[it]) << " ";
         (*pOutMean)[it] += eta * diff;
+
+        std::string fname = (stTranslator.storage().end() == stTranslator.storage().find(format("%d", it)) ?
+                             format("%d", it) : stTranslator.storage().find(format("%d", it))->second);
+
+        // Clipping.
+        // if(std::string::npos == fname.find("rule") && std::string::npos == fname.find("U_"))
+        //   (*pOutMean)[it]  = std::min(-0.01f, (*pOutMean)[it]);
+        
         (*pLog) << format("after_m=\"%.2f\" after_v=\"%.2f\" />", (*pOutMean)[it]) << std::endl;
       }
     }

@@ -151,6 +151,7 @@ def html(fn, obs_name, itr, fvdict):
 	return """
 <html>
 	<head>
+	  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
   	<link href="./lib/bootstrap-3.0.3/dist/css/bootstrap.min.css" rel="stylesheet" />
 	  <link href="./lib/vakata-jstree-a0767ce/dist/themes/default/style.min.css" rel="stylesheet" />
 	  <script>

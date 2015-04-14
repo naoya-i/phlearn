@@ -5,6 +5,7 @@
 (B (name ax3) (=> (sprinkler x :1.2) (kids_play x)) )
 ;(B (name ax3) (=> (rainy x :1.2) (watson_wet x)) )
 (B (name ax4) (=> (rainy x :0.8) (holmes_wet x)) )
+;(B (name ax5) (=> (^ (god_cry x :0.8) (foo x)) (rainy x)) )
 
 (O (name tester01) (^ (holmes_wet A) (kids_play A) (watson_wet A) ) )
 ;(O (name tester01) (^ (r A :10) ) )

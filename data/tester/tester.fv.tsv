@@ -3,7 +3,9 @@ ax1,1	11:1
 ax2	1:1
 ax3	2:1
 ax4	3:1
+ax5	4:1
 holmes_wet/1	100:1
 watson_wet/1	101:1
 sprinkler/1	102:1
 rainy/1	103:1
+PER-PRED_IMP	104:1

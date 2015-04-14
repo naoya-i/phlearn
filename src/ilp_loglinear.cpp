@@ -15,15 +15,15 @@ namespace phil
   }
   
   namespace ilp {
-    inline void _addFeatureVector(util::sparse_vector_t *pOut, const util::sparse_vector_t &sv) {
+    inline void _addFeatureVector(util::sparse_vector_t *pOut, const util::sparse_vector_t &sv, float fValue = -9999.0f) {
       for(auto fv: sv)
-        (*pOut)[fv.first] += fv.second;
+        (*pOut)[fv.first] += (fValue != -9999.0f ? fValue : fv.second);
     }
 
-    inline void _injectSV(const storage_t<sparse_vector_storage_t> &stFv, const std::string &name, util::sparse_vector_t *pOut) {
+    inline void _injectSV(const storage_t<sparse_vector_storage_t> &stFv, const std::string &name, util::sparse_vector_t *pOut, float fValue = -9999.0f) {
       if(stFv.storage().end() != stFv.storage().find(name)) {
         print_console("  FV:     " + stFv.storage().at(name).toString());
-        _addFeatureVector(pOut, stFv.storage().at(name).vector());
+        _addFeatureVector(pOut, stFv.storage().at(name).vector(), fValue);
       }
     }
 
@@ -71,7 +71,27 @@ namespace phil
       _injectSV(stFv, format("%s,%d", axiom.name.c_str(), idxAxiom), pOut);
       print_console(format("  INDEX: %d", idxAxiom));
     }
+
+    float _getImportanceOfLiteralInAxiom(const lf::axiom_t &axiom, const pg::node_t &n) {
       
+      // Add per-predicate feature vector.
+      std::vector<literal_t> lsLHS;
+      
+      assert(axiom.func.is_operator(lf::OPR_IMPLICATION) || axiom.func.is_operator(lf::OPR_PARAPHRASE));
+      
+      if(axiom.func.branch(0).is_operator(lf::OPR_LITERAL))
+        lsLHS.push_back(axiom.func.branch(0).literal());
+      
+      else {
+        for(auto &lf: axiom.func.branch(0).branches()) {
+          assert(lf.is_operator(lf::OPR_LITERAL));
+          lsLHS.push_back(lf.literal());
+        }
+      }
+
+      return 1.0f / (float)lsLHS.size();
+    }
+    
     void _createFeatureVector(const pg::proof_graph_t* graph, const storage_t<sparse_vector_storage_t> &stFv, util::sparse_vector_t *pOut, const pg::node_t &n) {
       kb::knowledge_base_t *pKB = kb::knowledge_base_t::instance();
 
@@ -81,9 +101,12 @@ namespace phil
 
       } else if(pg::NODE_OBSERVABLE == n.type()) {
         _createFeatureVectorOfObservation(graph, stFv, pOut, n);
+
+        _injectSV(stFv, "PER-PRED_IMP", pOut, -1.0f);
         
       } else {
         // Create features of axioms used for n.
+        float                       fCounter = -1.0f;
         std::vector<pg::node_idx_t> nstack;
         nstack.push_back(n.index());
 
@@ -102,8 +125,12 @@ namespace phil
 
             // Push the feature vector into the buffer.
             if(nodes.end() != std::find(nodes.begin(), nodes.end(), sn)) {
+              float fLocalImp = _getImportanceOfLiteralInAxiom(pKB->get_axiom(graph->edge(e).axiom_id()), graph->node(sn));
+              fCounter *= 1.1f*fLocalImp;
               _createFeatureVectorOfAxiom(graph, stFv, pOut, pKB->get_axiom(graph->edge(e).axiom_id()), graph->node(sn));
-          
+
+              print_console(format("  importance: %f, (accum.: %f)", fLocalImp, fCounter));
+              
               // Go into deeper...
               for(auto snn: graph->hypernode(graph->edge(e).tail()))
                 nstack.insert(nstack.begin(), snn);
@@ -112,10 +139,13 @@ namespace phil
             }
           }
         }
+
+        _injectSV(stFv, "PER-PRED_IMP", pOut, fCounter);
       
         for(auto e: n.evidences()) {
-          if(pg::NODE_OBSERVABLE == graph->node(e).type())
+          if(pg::NODE_OBSERVABLE == graph->node(e).type()) {
             _createFeatureVectorOfObservation(graph, stFv, pOut, graph->node(e));
+          }
         }
       }
     }
