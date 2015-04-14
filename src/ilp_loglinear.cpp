@@ -102,7 +102,7 @@ namespace phil
       } else if(pg::NODE_OBSERVABLE == n.type()) {
         _createFeatureVectorOfObservation(graph, stFv, pOut, n);
 
-        _injectSV(stFv, "PER-PRED_IMP", pOut, -1.0f);
+        _injectSV(stFv, "SIZE", pOut, -1.0f);
         
       } else {
         // Create features of axioms used for n.
@@ -140,7 +140,7 @@ namespace phil
           }
         }
 
-        _injectSV(stFv, "PER-PRED_IMP", pOut, fCounter);
+        _injectSV(stFv, "SIZE", pOut, fCounter);
       
         for(auto e: n.evidences()) {
           if(pg::NODE_OBSERVABLE == graph->node(e).type()) {
@@ -151,10 +151,11 @@ namespace phil
     }
 
     float _getScore(const pg::proof_graph_t *graph, const util::sparse_vector_t &wv, const storage_t<sparse_vector_storage_t> &stFv,
-                    const pg::node_t &n, util::sparse_vector_t *pOutFV) {
-      float               ret = 0.0;
+                    const pg::node_t &n, util::sparse_vector_t *pOutFVassumed, util::sparse_vector_t *pOutFVactive) {
+      float sAssumed = 0.0, sActive = 0.0;
 
-      assert(NULL != pOutFV);
+      assert(NULL != pOutFVassumed);
+      assert(NULL != pOutFVactive);
       
       // Create the feature vetor.
       print_console("-- fv: " + n.to_string());

@@ -274,7 +274,7 @@ public:
     }
   }
 
-  void learn(const storage_t<sparse_vector_storage_t> &stFv, const storage_t<std::string> &stFt,
+  bool learn(const storage_t<sparse_vector_storage_t> &stFv, const storage_t<std::string> &stFt,
              const storage_t<logical_function_storage_t> &stLabel,
             ilp::loglinear_converter_t *pLLConv,
             const std::vector<lf::input_t>& parsed_inputs, int idx, util::sparse_vector_t &vecMean, util::sparse_vector_t &vecVariance, std::ostream *pLog) {
@@ -296,7 +296,7 @@ public:
     // Obtain the ground truth of this observation.
     if(stLabel.storage().end() == stLabel.storage().find(util::getObsShortName(parsed_inputs.at(idx).name))) {
       (*pLog) << "<label-status>no-annotation</label-status>" << std::endl;
-      return;
+      return false;
     }
 
     const std::vector<lf::logical_function_t> &lfsGold = stLabel.storage().at(util::getObsShortName(parsed_inputs.at(idx).name)).lfs();
@@ -310,13 +310,13 @@ public:
 
     if(0 == numHits) {
       (*pLog) << "<label-status>no-potential-gold-literal</label-status>" << std::endl;
-      return;
+      return false;
     }
 
     (*pLog) << "<label-status>potential-gold-literal-found</label-status>" << std::endl;
 
     if(flag("learn_label_check_only"))
-      return;
+      return false;
     
     // Perform inference.
     execute_convertor();
@@ -354,7 +354,7 @@ public:
     (*pLog) << "</current-prediction>" << std::endl;
 
     if("structured_perceptron" == param("learn_algo") && 0 < numCorrects)
-      return;
+      return false;
       
     // Create ILP variables expressing inclusion of gold literals.
     (*pLog) << "<latent-variable-completion>" << std::endl;
@@ -428,6 +428,8 @@ public:
     
     (*pLog) << "<loss>" << loss << "</loss>" << std::endl;
     (*pLog) << "</weight-update>" << std::endl;
+
+    return true;
   }
 };
 
@@ -539,6 +541,8 @@ int main(int argc, char* argv[]) {
       
     } else {
       for(int n=0; n<phillip.param_int("learn_iter", 1); n++) {
+        int numUpdates = 0;
+        
         for (int i = 0; i < parsed_inputs.size(); ++i) {
           const lf::input_t &ipt = parsed_inputs.at(i);
             
@@ -550,7 +554,7 @@ int main(int argc, char* argv[]) {
             
             // Step forward!
             (*pLog) << format("<round iteration=\"%d\" observation=\"%s\">", 1+n, obs_name.c_str()) << std::endl;
-            phillip.learn(stFeatureVector, stFeatureTranslator, stLabel, pLLConv, parsed_inputs, i, vecMean, vecVariance, pLog);
+            numUpdates += phillip.learn(stFeatureVector, stFeatureTranslator, stLabel, pLLConv, parsed_inputs, i, vecMean, vecVariance, pLog) ? 1 : 0;
             (*pLog) << "</round>" << std::endl;
             
             kb::knowledge_base_t::instance()->clear_distance_cache();
@@ -558,6 +562,8 @@ int main(int argc, char* argv[]) {
         }
 
         _printWeightVector(n, vecMean, vecVariance);
+
+        if(0 == numUpdates) break;
       }
       
     }
