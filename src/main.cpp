@@ -1,6 +1,7 @@
 // Log-linear abduction
 
 #include <fstream>
+#include <chrono>
 
 #include "./binary.h"
 #include "./processor.h"
@@ -274,7 +275,7 @@ public:
     }
   }
 
-  bool learn(const storage_t<sparse_vector_storage_t> &stFv, const storage_t<std::string> &stFt,
+  int learn(const storage_t<sparse_vector_storage_t> &stFv, const storage_t<std::string> &stFt,
              const storage_t<logical_function_storage_t> &stLabel,
             ilp::loglinear_converter_t *pLLConv,
             const std::vector<lf::input_t>& parsed_inputs, int idx, util::sparse_vector_t &vecMean, util::sparse_vector_t &vecVariance, std::ostream *pLog) {
@@ -296,7 +297,7 @@ public:
     // Obtain the ground truth of this observation.
     if(stLabel.storage().end() == stLabel.storage().find(util::getObsShortName(parsed_inputs.at(idx).name))) {
       (*pLog) << "<label-status>no-annotation</label-status>" << std::endl;
-      return false;
+      return -1;
     }
 
     const std::vector<lf::logical_function_t> &lfsGold = stLabel.storage().at(util::getObsShortName(parsed_inputs.at(idx).name)).lfs();
@@ -305,22 +306,32 @@ public:
     
     for(auto &lfGold: lfsGold) {
       (*pLog) << "<label>" << lfGold.to_string() << "</label>" << std::endl;
-      if(_getGoldSetsVars(graph, NULL, unihns, lfGold, NULL, flag("learn_exclude_transieq"), &trash)) numHits++;
+      
+      if(_getGoldSetsVars(graph, NULL, unihns, lfGold, NULL, flag("learn_exclude_transieq"), &trash))
+        numHits++;
     }
 
     if(0 == numHits) {
       (*pLog) << "<label-status>no-potential-gold-literal</label-status>" << std::endl;
-      return false;
+
+      if(!flag("learn_force_predict"))
+        return -1;
     }
 
     (*pLog) << "<label-status>potential-gold-literal-found</label-status>" << std::endl;
 
-    if(flag("learn_label_check_only"))
-      return false;
+    if(flag("learn_label_check_only") && !flag("learn_force_predict"))
+      return -1;
     
     // Perform inference.
+    std::cerr << "Timeout of sol: " << this->timeout_sol() << std::endl;
+    
     execute_convertor();
+
+    std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
     execute_solver();
+    std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1);
     
     (*pLog) << "<current-prediction>" << std::endl;
     ilp::ilp_problem_t               *prob   = ((ilp::loglinear_converter_t*)ilp_convertor())->getILPProblem();
@@ -353,8 +364,13 @@ public:
     (*pLog) <<  "<result>" << numCorrects << "</result>" << std::endl;
     (*pLog) << "</current-prediction>" << std::endl;
 
+    if(sol.type() != ilp::SOLUTION_OPTIMAL || sol.is_timeout() || time_span.count() > param_float("learn_timeout", 9999)) {
+      (*pLog) << "<inexact-solution />" << std::endl;
+      return 0;
+    }
+    
     if("structured_perceptron" == param("learn_algo") && 0 < numCorrects)
-      return false;
+      return 0;
       
     // Create ILP variables expressing inclusion of gold literals.
     (*pLog) << "<latent-variable-completion>" << std::endl;
@@ -400,7 +416,10 @@ public:
     (*pLog) << "<logical-form>" + util::literalsToString(lfSolCompetitor) << "</logical-form>" << std::endl;
     (*pLog) << "<vector>"; _printVector(vCompetitor, pLog); (*pLog) << "</vector>" << std::endl;
     (*pLog) << "</latent-variable-completion>" << std::endl;
-  
+
+    if(sols[0].type() != ilp::SOLUTION_OPTIMAL)
+      return 0;
+    
     // Update the weight vector.
     if(0 == numCorrects) std::swap(vCompetitor, vGold);
   
@@ -429,7 +448,7 @@ public:
     (*pLog) << "<loss>" << loss << "</loss>" << std::endl;
     (*pLog) << "</weight-update>" << std::endl;
 
-    return true;
+    return 1;
   }
 };
 
@@ -542,20 +561,24 @@ int main(int argc, char* argv[]) {
     } else {
       for(int n=0; n<phillip.param_int("learn_iter", 1); n++) {
         int numUpdates = 0;
+        hash_set<std::string> npgls;
         
-        for (int i = 0; i < parsed_inputs.size(); ++i) {
+        for(int i = 0; i < parsed_inputs.size(); ++i) {
           const lf::input_t &ipt = parsed_inputs.at(i);
             
           std::string obs_name = ipt.name;
-          if (obs_name.rfind("::") != std::string::npos)
+          if(obs_name.rfind("::") != std::string::npos)
             obs_name = obs_name.substr(obs_name.rfind("::") + 2);
-            
-          if (phillip.is_target(obs_name) and not phillip.is_excluded(obs_name)) {
+
+          if(phillip.is_target(obs_name) and not phillip.is_excluded(obs_name) and npgls.count(obs_name) == 0) {
             
             // Step forward!
             (*pLog) << format("<round iteration=\"%d\" observation=\"%s\">", 1+n, obs_name.c_str()) << std::endl;
-            numUpdates += phillip.learn(stFeatureVector, stFeatureTranslator, stLabel, pLLConv, parsed_inputs, i, vecMean, vecVariance, pLog) ? 1 : 0;
+            int ret = phillip.learn(stFeatureVector, stFeatureTranslator, stLabel, pLLConv, parsed_inputs, i, vecMean, vecVariance, pLog);
+            numUpdates += ret == 1 ? 1 : 0;
             (*pLog) << "</round>" << std::endl;
+
+            if(-1 == ret) npgls.insert(obs_name);
             
             kb::knowledge_base_t::instance()->clear_distance_cache();
           }

@@ -8,4 +8,11 @@ holmes_wet/1	100:1
 watson_wet/1	101:1
 sprinkler/1	102:1
 rainy/1	103:1
-PER-PRED_IMP	104:1
+SIZE	104:1
+clsax1	1000:0.01
+clsax2	1001:0.01
+clsax3	1002:0.01
+clsax4	1003:0.01
+clsax5	1004:0.01
+clsax6	1005:0.01
+

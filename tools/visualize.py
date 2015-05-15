@@ -1,5 +1,6 @@
 from lxml import etree
 
+import StringIO
 import sys
 import re
 import collections
@@ -49,9 +50,13 @@ def _createTree(xml):
 	return ret
 	
 def html(fn, obs_name, itr, fvdict):
-	xml    = etree.parse(fn)
-	fvdict = dict([tuple(x.split("\t")) for x in open(fvdict)])
-
+	m = re.search("<round iteration=\"%s\" observation=\"%s\">(.*?)</round>" % (itr, obs_name), open(fn).read(), re.DOTALL)
+	xml = etree.parse(StringIO.StringIO("<phillip-learn>" + m.group(0) + "</phillip-learn>"))
+	if "-" != fvdict:
+		fvdict = dict([tuple(x.split("\t")) for x in open(fvdict)])
+	else:
+		fvdict = {}
+		
 	# Counting the list of observations and iteration.
 	list_itr = xml.xpath("/phillip-learn/round[@observation='%s']/@iteration" % obs_name)
 	obs      = xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/current-prediction/proofgraph/literals/literal[@type='observable']/text()" % (obs_name, itr))

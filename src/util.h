@@ -24,7 +24,7 @@ namespace util {
     
   
   inline void forceILPvarval(ilp::ilp_problem_t *prob, ilp::variable_idx_t var, float val) {
-    ilp::constraint_t con("", ilp::OPR_EQUAL, val);
+    ilp::constraint_t con("force", ilp::OPR_EQUAL, val);
     con.add_term(var, 1.0);
     prob->add_constraint(con);
   }

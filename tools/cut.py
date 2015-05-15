@@ -1,9 +1,12 @@
-
+import StringIO
+import re
 import sys
 
 from lxml import etree
 
-xml = etree.parse(sys.argv[1])
+m = re.search("<round iteration=\"%s\" observation=\"%s\">(.*?)</round>" % (sys.argv[2], sys.argv[3]), open(sys.argv[1]).read(), re.DOTALL)
+
+xml = etree.parse(StringIO.StringIO("<phillip-learn>" + m.group(0) + "</phillip-learn>"))
 
 print """<phillip>
 <configure>

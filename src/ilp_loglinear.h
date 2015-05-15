@@ -46,14 +46,15 @@ namespace phil
     class loglinear_xml_decorator_t : public ilp::solution_xml_decorator_t
     {
     public:
-      loglinear_xml_decorator_t(const hash_map<pg::node_idx_t, ilp::variable_idx_t> &node2nodevar,
+      loglinear_xml_decorator_t(const hash_map<pg::node_idx_t, ilp::variable_idx_t> &node2asvar,
+                                const hash_map<pg::node_idx_t, ilp::variable_idx_t> &node2acvar,
                                 const hash_map<ilp::variable_idx_t, util::sparse_vector_t> &fvMap)
-        : m_node2nodevar(node2nodevar), m_fvMap(fvMap) {}
+        : m_node2asvar(node2asvar), m_node2acvar(node2acvar), m_fvMap(fvMap) {}
 
       virtual void get_literal_attributes(const ilp_solution_t *sol, pg::node_idx_t idx,
                                           hash_map<std::string, std::string> *out) const;
     private:
-      const hash_map<pg::node_idx_t, ilp::variable_idx_t> m_node2nodevar;
+      const hash_map<pg::node_idx_t, ilp::variable_idx_t> m_node2asvar, m_node2acvar;
       const hash_map<ilp::variable_idx_t, util::sparse_vector_t>          m_fvMap;
     };
     

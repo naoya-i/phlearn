@@ -1,2 +1,10 @@
-tester01	(label (^ (rainy A) ))
+tester01	(label (^ (rainy x) ))
+cls1	(label (^ (c1 A) ))
+cls2	(label (^ (c1 A) ))
+cls3	(label (^ (c2 A) ))
+cls4	(label (^ (c2 A) ))
+clsm1	(label (^ (c1 A) (c2 B) ))
+clsm2	(label (^ (c1 A) (c1 B) ))
+clsm3	(label (^ (c2 A) (c1 B) ))
+clsm4	(label (^ (c2 A) ))
 

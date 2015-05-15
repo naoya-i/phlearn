@@ -28,6 +28,8 @@ namespace phil
     }
 
     void _createFeatureVectorOfObservation(const pg::proof_graph_t* graph, const storage_t<sparse_vector_storage_t> &stFv, util::sparse_vector_t *pOut, const pg::node_t &n) {
+      return;
+      
       print_console("  --");
       print_console("  OBS:    " + n.to_string());
       print_console("  OBS:    " + n.arity());
@@ -51,6 +53,7 @@ namespace phil
       // Add per-axiom feature vector.
       _injectSV(stFv, axiom.name, pOut);
 
+      //
       // Add per-predicate feature vector.
       std::vector<literal_t> lsLHS;
       
@@ -75,38 +78,44 @@ namespace phil
     float _getImportanceOfLiteralInAxiom(const lf::axiom_t &axiom, const pg::node_t &n) {
       
       // Add per-predicate feature vector.
-      std::vector<literal_t> lsLHS;
+      int importance = 0;
       
       assert(axiom.func.is_operator(lf::OPR_IMPLICATION) || axiom.func.is_operator(lf::OPR_PARAPHRASE));
       
       if(axiom.func.branch(0).is_operator(lf::OPR_LITERAL))
-        lsLHS.push_back(axiom.func.branch(0).literal());
+        importance = 1;
       
       else {
         for(auto &lf: axiom.func.branch(0).branches()) {
           assert(lf.is_operator(lf::OPR_LITERAL));
-          lsLHS.push_back(lf.literal());
+
+          if(lf.literal().predicate != "!=" && lf.literal().predicate != "=")
+            importance += 1;
         }
       }
 
-      return 1.0f / (float)lsLHS.size();
+      return 1.0f / (float)importance;
     }
     
-    void _createFeatureVector(const pg::proof_graph_t* graph, const storage_t<sparse_vector_storage_t> &stFv, util::sparse_vector_t *pOut, const pg::node_t &n) {
-      kb::knowledge_base_t *pKB = kb::knowledge_base_t::instance();
-
+    void _createFeatureVector(const pg::proof_graph_t* graph, const storage_t<sparse_vector_storage_t> &stFv, util::sparse_vector_t *pOutAssumed, util::sparse_vector_t *pOutActive, const pg::node_t &n, int sizeOfObservation) {
+      kb::knowledge_base_t *pKB               = kb::knowledge_base_t::instance();
+      auto                  fIncreasingFactor = 1.2f;
+      
       if(n.is_equality_node() || n.is_non_equality_node() ||
          n.is_transitive_equality_node() ) {
         //_createFeatureVectorOfEq(graph, stFv, pOut, n);
 
       } else if(pg::NODE_OBSERVABLE == n.type()) {
-        _createFeatureVectorOfObservation(graph, stFv, pOut, n);
+        _createFeatureVectorOfObservation(graph, stFv, pOutActive, n);
 
-        _injectSV(stFv, "SIZE", pOut, -1.0f);
+        _injectSV(stFv, "SIZE", pOutAssumed, -1.0f / sizeOfObservation);
         
       } else {
-        // Create features of axioms used for n.
-        float                       fCounter = -1.0f;
+        
+        //
+        // Create feature vector of axioms hypothesized for n.
+        float                       fCounter = -1.0f / sizeOfObservation;
+        int                         nVisit   = 0;
         std::vector<pg::node_idx_t> nstack;
         nstack.push_back(n.index());
 
@@ -125,49 +134,93 @@ namespace phil
 
             // Push the feature vector into the buffer.
             if(nodes.end() != std::find(nodes.begin(), nodes.end(), sn)) {
+              if(nVisit++ == 0)
+                _createFeatureVectorOfAxiom(graph, stFv, pOutActive, pKB->get_axiom(graph->edge(e).axiom_id()), graph->node(sn));
+              
               float fLocalImp = _getImportanceOfLiteralInAxiom(pKB->get_axiom(graph->edge(e).axiom_id()), graph->node(sn));
-              fCounter *= 1.1f*fLocalImp;
-              _createFeatureVectorOfAxiom(graph, stFv, pOut, pKB->get_axiom(graph->edge(e).axiom_id()), graph->node(sn));
+              fCounter *= fIncreasingFactor * fLocalImp;
 
-              print_console(format("  importance: %f, (accum.: %f)", fLocalImp, fCounter));
+              // print_console(format("  axiom: %s", pKB->get_axiom(graph->edge(e).axiom_id()).func.to_string().c_str()));
+              // print_console(format("  importance: %f, (accum.: %f)", fLocalImp, fCounter));
               
               // Go into deeper...
               for(auto snn: graph->hypernode(graph->edge(e).tail()))
                 nstack.insert(nstack.begin(), snn);
+
+              fCounter *= graph->hypernode(graph->edge(e).tail()).size();
               
               break;
             }
           }
         }
 
-        _injectSV(stFv, "SIZE", pOut, fCounter);
+        // Size.
+        _injectSV(stFv, "SIZE", pOutAssumed, fCounter);
+
+        // 
+        // Add contextual feature and predicate feature.
+        // for(auto t=0; t<n.literal().terms.size(); t++) {
+        //   const hash_set<pg::node_idx_t> *pRelatedNodes = graph->search_nodes_with_term(n.literal().terms[t]);
+
+        //   for(auto relnode: *pRelatedNodes) {
+        //     if(relnode == n.index() || graph->node(relnode).is_equality_node() || graph->node(relnode).is_non_equality_node())
+        //       continue;
+
+        //     if(graph->node(relnode).type() != pg::NODE_OBSERVABLE) continue;
+
+        //     // Identify which term is the same as n.literal().terms[t].
+        //     for(auto tt=0; tt<graph->node(relnode).literal().terms.size(); tt++) {
+        //       if(n.literal().terms[t]==graph->node(relnode).literal().terms[tt]) {
+        //         print_console(format("  rel: %s.%d ~ %s.%d", n.to_string().c_str(), t, graph->node(relnode).to_string().c_str(), tt));
+
+        //         _injectSV(stFv, format("%s.%d|%s.%d", n.arity().c_str(), t, graph->node(relnode).arity().c_str(), tt), pOutActive);
+        //         print_console(format(" CTX: %s.%d|%s.%d", n.arity().c_str(), t, graph->node(relnode).arity().c_str(), tt));
+        //       }
+        //     }
+        //   }
+        // }
+        
+        // for(auto node: graph->nodes()) {
+        //   if(node.type() != pg::NODE_OBSERVABLE) break;
+          
+        //   _injectSV(stFv, format("%s|%s", n.arity().c_str(), node.arity().c_str()), pOutActive);
+        //   print_console(format(" CTX: %s|%s", n.arity().c_str(), node.arity().c_str()));
+        // }
       
-        for(auto e: n.evidences()) {
-          if(pg::NODE_OBSERVABLE == graph->node(e).type()) {
-            _createFeatureVectorOfObservation(graph, stFv, pOut, graph->node(e));
-          }
-        }
+        // for(auto e: n.evidences()) {
+        //   if(pg::NODE_OBSERVABLE == graph->node(e).type()) {
+        //     _createFeatureVectorOfObservation(graph, stFv, pOut, graph->node(e));
+        //   }
+        // }
       }
     }
 
-    float _getScore(const pg::proof_graph_t *graph, const util::sparse_vector_t &wv, const storage_t<sparse_vector_storage_t> &stFv,
-                    const pg::node_t &n, util::sparse_vector_t *pOutFVassumed, util::sparse_vector_t *pOutFVactive) {
-      float sAssumed = 0.0, sActive = 0.0;
-
-      assert(NULL != pOutFVassumed);
-      assert(NULL != pOutFVactive);
+    float _inp(const util::sparse_vector_t &v1, const util::sparse_vector_t &v2) {
+      float ret = 0.0f;
+      for(auto it: v1) {
+        auto w = v2.find(it.first);
+        ret += (v2.end() != w ? w->second : 0.0) * it.second;
+      }
+      return ret;
+    }
+    
+    void _getScore(const pg::proof_graph_t *graph, const util::sparse_vector_t &wv, const storage_t<sparse_vector_storage_t> &stFv,
+                   const pg::node_t &n,
+                   util::sparse_vector_t *pOutFVassumed, util::sparse_vector_t *pOutFVactive, float *pOutAssumed, float *pOutActive,
+                   int sizeOfObservation) {
+      util::sparse_vector_t vas, vac;
       
       // Create the feature vetor.
-      print_console("-- fv: " + n.to_string());
-      _createFeatureVector(graph, stFv, pOutFV, n);
+      if(!n.is_equality_node() && !n.is_non_equality_node())
+        print_console("-- fv: " + n.to_string());
+      
+      _createFeatureVector(graph, stFv, &vas, &vac, n, sizeOfObservation);
         
       // Calculate the weighted score.
-      for(auto it: *pOutFV) {
-        auto w = wv.find(it.first);
-        ret += (wv.end() != w ? w->second : 0.0) * it.second;
-      }
-
-      return ret;
+      if(NULL != pOutFVassumed) *pOutFVassumed = vas;
+      if(NULL != pOutAssumed)   *pOutAssumed   = _inp(vas, wv);
+      if(NULL != pOutFVactive)  *pOutFVactive  = vac;
+      if(NULL != pOutActive)    *pOutActive    = _inp(vac, wv);
     }
 
     float _getScoreOfUnification(const pg::proof_graph_t *graph, const util::sparse_vector_t &wv, const storage_t<sparse_vector_storage_t> &stFv,
@@ -211,13 +264,13 @@ namespace phil
 
     void _equalizeEdgeAndHN(ilp::ilp_problem_t *prob, const pg::proof_graph_t* graph, pg::edge_idx_t ei) {
       if(-1 == graph->edge(ei).head()) {
-        ilp::constraint_t con("", ilp::OPR_LESS_EQ, 0);
+        ilp::constraint_t con("eql " + graph->edge_to_string(ei), ilp::OPR_LESS_EQ, 0);
         con.add_term(_getHypernodeVar(prob, graph->edge(ei).tail()), 1.0);
         con.add_term(prob->find_variable_with_edge(ei), -2.0);
         prob->add_constraint(con);
         
       } else {
-        ilp::constraint_t con("", ilp::OPR_LESS_EQ, 1);
+        ilp::constraint_t con("eql " + graph->edge_to_string(ei), ilp::OPR_LESS_EQ, 1);
         con.add_term(_getHypernodeVar(prob, graph->edge(ei).tail()), 1.0);
         con.add_term(_getHypernodeVar(prob, graph->edge(ei).head()), 1.0);
         con.add_term(prob->find_variable_with_edge(ei), -2.0);
@@ -234,7 +287,7 @@ namespace phil
         con1("hey1", ilp::OPR_LESS_EQ, 0),
         con2("hey2", ilp::OPR_LESS_EQ, hn.size()-1);
       std::string conname;
-
+      
       conname = prob->variable(_getHypernodeVar(prob, hi)).name() + " <=> ";
       
       con1.add_term(_getHypernodeVar(prob, hi), hn.size());
@@ -248,11 +301,15 @@ namespace phil
 
       con1.set_name(conname);
       con2.set_name(conname);
-      
+
       prob->add_constraint(con1);
-      prob->add_constraint(con2);
+      
+      /* N => HN dependency is only for non-EQs hypernode. */
+      if(!graph->is_hypernode_for_unification(hi)) 
+        prob->add_constraint(con2);
+      
     }
-    
+
     ilp::ilp_problem_t* loglinear_converter_t::execute() const {
       reset();
 
@@ -263,19 +320,70 @@ namespace phil
       convert_proof_graph(m_prob);
       if(m_prob->is_timeout()) return m_prob;
       
-      hash_map<pg::node_idx_t, ilp::variable_idx_t> node2var;
+      hash_map<pg::node_idx_t, ilp::variable_idx_t> node2asvar, node2acvar;
       hash_map<pg::node_idx_t, ilp::variable_idx_t> uni2var;
-
+      hash_map<pg::hypernode_idx_t, hash_set<pg::hypernode_idx_t> > hnpairs;
+      
       for(auto i=0; i<graph->edges().size(); i++) {
-        _doubleImplication(m_prob, graph, graph->edge(i).head());
-        _doubleImplication(m_prob, graph, graph->edge(i).tail());
+        pg::hypernode_idx_t
+          head = graph->edge(i).head(),
+          tail = graph->edge(i).tail();
+
+        _doubleImplication(m_prob, graph, head);
+        _doubleImplication(m_prob, graph, tail);
         _equalizeEdgeAndHN(m_prob, graph, i);
+        
+        if(!graph->edge(i).is_unify_edge() && -1 != head && -1 != tail)
+          hnpairs[tail].insert(head);
+        
       }
 
+      //
+      // Make hypernodes having the same parent mutual exclusive. (Explanatory XOR)
+      if(phillip()->flag("learn_exp_mex")) {
+        for(auto i: hnpairs) {
+          if(1 >= i.second.size()) continue;
+        
+          ilp::constraint_t con(graph->hypernode2str(i.first) + "<-", ilp::OPR_LESS_EQ, 1);
+
+          print_console("MX: " + graph->hypernode2str(i.first));
+
+          for(auto j: i.second) {
+            print_console("MX: <- " + graph->hypernode2str(j));
+            con.add_term(_getHypernodeVar(m_prob, j), 1.0);
+          }
+
+          m_prob->add_constraint(con);
+        }
+      }
+      
+      int sizeOfObservation = 0;
+      
+      struct node_feature_vector_t {
+        float fAssumedScore, fActiveScore;
+        util::sparse_vector_t vAssumed, vActive;
+      };
+      
+      hash_map<pg::node_idx_t, node_feature_vector_t> storageNodeFeatureVector;
+
+      // Count the number of observed literals.
+      for(auto node: graph->nodes())
+        if(node.type() == pg::NODE_OBSERVABLE) sizeOfObservation++;
+
+      // Create the feature vector for each node.
+      for(auto node: graph->nodes()) {
+        _getScore(graph, m_wv, m_stFv, node,
+                  &storageNodeFeatureVector[node.index()].vAssumed,
+                  &storageNodeFeatureVector[node.index()].vActive,
+                  &storageNodeFeatureVector[node.index()].fAssumedScore,
+                  &storageNodeFeatureVector[node.index()].fActiveScore,
+                  sizeOfObservation);
+      }
+      
       for(auto node: graph->nodes()) {
         // Force this node to be hypothesized if it is observable.
         if(node.type() == pg::NODE_OBSERVABLE) {
-          ilp::constraint_t con("",  ilp::OPR_EQUAL, 1);
+          ilp::constraint_t con("obs:" + node.to_string(),  ilp::OPR_EQUAL, 1);
           con.add_term(_getNodeVar(m_prob, node.index()), 1.0);
           m_prob->add_constraint(con);
         }
@@ -305,11 +413,12 @@ namespace phil
 
             // Make {x=y, u=v, p(x,u)} or {x=y, u=v, p(y,v)} an explanation.
             // Smaller node will be explained by larger nodes.
-            util::sparse_vector_t            svT1, svT2;
-            pg::node_idx_t                   largerNode =
-              _getScore(graph, m_wv, m_stFv, graph->node(hypernodesTail[0]), &svT1) >
-              _getScore(graph, m_wv, m_stFv, graph->node(hypernodesTail[1]), &svT2) ?
-              hypernodesTail[0] : hypernodesTail[1];
+            float
+              fAssumedScore1 = storageNodeFeatureVector[hypernodesTail[0]].fAssumedScore,
+              fAssumedScore2 = storageNodeFeatureVector[hypernodesTail[1]].fAssumedScore;
+            
+            pg::node_idx_t                   largerNode = fAssumedScore1 > fAssumedScore2 ? hypernodesTail[0] : hypernodesTail[1],
+                                             smallerNode = fAssumedScore1 > fAssumedScore2 ? hypernodesTail[1] : hypernodesTail[0];
             std::vector<ilp::variable_idx_t> vConditionVars;
             std::vector<int>                 vConditionSigns;
             std::string                      e_str;
@@ -325,21 +434,18 @@ namespace phil
 
               // Add equalities.
               if(-1 != e.head()) { // For the case like: {} => {p(u), p(v)}
-                for(auto ni: graph->hypernode(e.head())) {
-                  vConditionSigns.push_back(1);
-                  vConditionVars.push_back(_getNodeVar(m_prob, ni));
-                }
+                vConditionSigns.push_back(1);
+                vConditionVars.push_back(_getHypernodeVar(m_prob, e.head()));
               }
 
               ilp::variable_idx_t varFI = util::createConditionedIndicator(m_prob, vConditionVars, vConditionSigns, true, "UE_" + e_str);
               vFeatureConditionSigns.push_back(-1);
               vFeatureConditionVars.push_back(varFI);
 
-              float score         = _getScoreOfUnification(graph, m_wv, m_stFv, node, graph->node(largerNode), &m_fvMap[varFI]);
-              m_prob->variable(varFI).set_coefficient(score);
-              m_scores[varFI]     = score;
-              uni2var[largerNode] = varFI;
-              
+              // float score         = _getScoreOfUnification(graph, m_wv, m_stFv, node, graph->node(largerNode), &m_fvMap[varFI]);
+              // m_prob->variable(varFI).set_coefficient(score);
+              // m_scores[varFI]     = score;
+              // uni2var[largerNode] = varFI;
             }
             
           } else {
@@ -350,14 +456,24 @@ namespace phil
         }
 
         // Set the score.
-        ilp::variable_idx_t varFI = util::createConditionedIndicator(m_prob, vFeatureConditionVars, vFeatureConditionSigns, true, "F");
-        float               score = _getScore(graph, m_wv, m_stFv, node, &m_fvMap[varFI]);
-        m_prob->variable(varFI).set_coefficient(score);
-        m_scores[varFI] = score;
-        node2var[node.index()] = varFI;
+        ilp::variable_idx_t
+          varFIas        = util::createConditionedIndicator(m_prob, vFeatureConditionVars, vFeatureConditionSigns, true, "Fas"),
+          varFIac        = _getNodeVar(m_prob, node.index());
+        float
+          fAssumedScore = storageNodeFeatureVector[node.index()].fAssumedScore,
+          fActiveScore  = storageNodeFeatureVector[node.index()].fActiveScore;
+        m_fvMap[varFIas] = storageNodeFeatureVector[node.index()].vAssumed;
+        m_fvMap[varFIac] = storageNodeFeatureVector[node.index()].vActive;
+        
+        m_prob->variable(varFIas).set_coefficient(fAssumedScore);
+        m_prob->variable(varFIac).set_coefficient(fActiveScore);
+        m_scores[varFIas] = fAssumedScore;
+        m_scores[varFIac] = fActiveScore;
+        node2asvar[node.index()] = varFIas;
+        node2acvar[node.index()] = varFIac;
       }
 
-      m_prob->add_xml_decorator(new loglinear_xml_decorator_t(node2var, m_fvMap));
+      m_prob->add_xml_decorator(new loglinear_xml_decorator_t(node2asvar, node2acvar, m_fvMap));
       m_prob->add_attributes("converter", "loglinear");
         
       return m_prob;
@@ -386,16 +502,25 @@ namespace phil
                                                            const ilp_solution_t *sol, pg::node_idx_t idx,
                                                            hash_map<std::string, std::string> *out) const
     {
-      auto i = m_node2nodevar.find(idx);
+      auto ias = m_node2asvar.find(idx), iac = m_node2acvar.find(idx);
       
-      if(i != m_node2nodevar.end()) {
-        auto j = m_fvMap.find(i->second);
+      if(ias != m_node2asvar.end()) {
+        auto j = m_fvMap.find(ias->second);
 
         if(j != m_fvMap.end()) {
-          (*out)["feature_vec"] = _toString(j->second);
+          (*out)["feature_vec"] += _toString(j->second);
         //(*out)["active"] = sol->variable_is_active(nodevar) ? "yes" : "no";
         }
       }
+
+      if(iac != m_node2asvar.end()) {
+        auto j = m_fvMap.find(iac->second);
+
+        if(j != m_fvMap.end()) {
+          (*out)["feature_vec"] += _toString(j->second);
+        //(*out)["active"] = sol->variable_is_active(nodevar) ? "yes" : "no";
+        }
+      }      
     }
     
   }  
