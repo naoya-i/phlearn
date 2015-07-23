@@ -28,14 +28,62 @@ void _printWeightVector(int n, const util::sparse_vector_t &vMean, const util::s
   }
 }
 
-bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, const hash_set<pg::hypernode_idx_t> &unihns, const lf::logical_function_t &lfGold,
-                      std::vector<ilp::variable_idx_t> *pOut, bool f_exclude_transitiveeq, std::ostream *pLog) {
+int _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, const hash_set<pg::hypernode_idx_t> &unihns, const lf::logical_function_t &lfGold,
+                      std::vector<ilp::variable_idx_t> *pOut, bool f_exclude_transitiveeq, ilp::ilp_solution_t *pSol, std::ostream *pLog) {
   assert(lfGold.is_operator(lf::OPR_AND));
-  
+
   // Convert the solution into a set of literals.
   std::vector<literal_t> lsGold;
+  std::vector<hash_set<pg::node_idx_t> > matchedNodes;
   util::lfToSetOfLiterals(lfGold, &lsGold);
-  
+
+  for(auto i=0; i<lsGold.size(); i++) {
+    hash_set<pg::node_idx_t> matches =  graph->enumerate_nodes_with_literal(lsGold[i]);
+
+    if(NULL != pSol) {
+      hash_set<pg::node_idx_t> matchesAlt;
+
+      for(auto n: matches) {
+        if(pSol->variable_is_active(prob->find_variable_with_node(n))) {
+          (*pLog) << "Found: " << graph->node(n).to_string() << std::endl;
+
+          matchesAlt.insert(n);
+        }
+      }
+
+      if(matchesAlt.size() > 0)
+        matchedNodes.push_back(matchesAlt);
+
+    } else {
+      if(matches.size() > 0) {
+        (*pLog) << "Found: " << lsGold[i].to_string() << std::endl;
+        matchedNodes.push_back(matches);
+      }
+
+    }
+  }
+
+  if(NULL != pOut) {
+    std::vector<ilp::variable_idx_t> vars;
+
+    for(auto i=0; i<matchedNodes.size(); i++) {
+
+      // All the edges leading these nodes must be true.
+      for(auto n: matchedNodes[i]) {
+        const hash_set<pg::edge_idx_t> *pEdges = graph->search_edges_with_node_in_head(n);
+
+        for(auto e: *pEdges) {
+          (*pLog) << "Edge: " << graph->edge_to_string(e) << std::endl;
+          vars.push_back(prob->find_variable_with_edge(e));
+        }
+      }
+    }
+
+    pOut->push_back(util::createConditionedIndicator(prob, vars, std::vector<int>(vars.size(), 1), true, "cond"));
+  }
+
+  return matchedNodes.size();
+
   // Extract related potential literals from the proof graph.
   std::vector<pg::node_idx_t> nsPoSol;
   util::extractRelatedPotentialNodes(graph, lsGold, &nsPoSol);
@@ -53,7 +101,7 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
   for(auto &v: matches) {
     if(0 == v.size()) return false;
   }
-  
+
   std::vector<std::vector<ilp::variable_idx_t> > varGoldNodes;
   int                                            numFound = 0;
 
@@ -62,7 +110,7 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
       hash_map<term_t, hash_set<term_t> > eqMap;
       std::vector<ilp::variable_idx_t>    vars;
       std::vector<pg::node_idx_t>         conditionedNodes;
-      
+
       (*pLog) << "<pattern>" << std::endl;
 
       //
@@ -70,13 +118,13 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
       (*pLog) << "<literals>" << std::endl;
       for(int i=0; i<indices.size(); i++) {
         (*pLog) << "<literal>" << graph->node(nsPoSol[matches[i][indices[i]]]).to_string() << "</literal>" << std::endl;
-        
+
         conditionedNodes.push_back(nsPoSol[matches[i][indices[i]]]);
-        
+
         // Create equality mapping (e.g., tmpl_x: {y, z, w, ...}, Child: {x, y, z, ...})
         for(auto eq: matchesEqs[i][indices[i]]) {
           eqMap[eq.first].insert(eq.second);
-          
+
           if(eq.first.is_constant())
             eqMap[eq.first].insert(eq.first);
         }
@@ -86,21 +134,21 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
       //
       // Write variable-matching log.
       bool fPossible = true;
-      
+
       (*pLog) << "<variables>" << std::endl;
       for(auto it: eqMap) {
         (*pLog) << "<match target=\"" << it.first.string() << "\">";
-          
+
         //
         // All the pairwise combination of the variables in it.second
         // must be possible. In the below, check the possibility on
         // proof graph created so far.
         for(auto &it2: it.second) {
-          for(auto &it3: it.second) {            
+          for(auto &it3: it.second) {
             if(it2.string() >= it3.string()) continue;
 
             (*pLog) << it2.string() << "=" << it3.string() << ",";
-            
+
             //
             // Check whether the equality conditions are in the proofgraph.
             pg::node_idx_t subnode = graph->find_sub_node(it2, it3);
@@ -108,16 +156,16 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
             if(f_exclude_transitiveeq && -1 != subnode) {
               if(graph->node(subnode).is_transitive_equality_node()) subnode = -1;
             }
-            
+
             conditionedNodes.push_back(subnode);
-             
+
             if(-1 == subnode) {
               (*pLog) << "... impossible., ";
               fPossible = false;
             }
           }
         }
-        
+
         (*pLog) << "</match>" << std::endl;
       }
       (*pLog) << "</variables>" << std::endl;
@@ -126,13 +174,13 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
       // Create the condition.
       if(fPossible) {
         bool fAbort = false;
-        
+
         (*pLog) << "<proofgraph-checking>" << std::endl;
-        
+
         for(auto ni: conditionedNodes) {
           (*pLog) << "<node target=\"" << graph->node(ni).to_string() << "\""
                   << " is_transitive_eq=\"" << graph->node(ni).is_transitive_equality_node() << "\">";
-          
+
           const hash_set<pg::node_idx_t>   *pHypernodes = graph->search_hypernodes_with_node(ni);
           std::vector<ilp::variable_idx_t> varsHN;
 
@@ -143,32 +191,32 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
             if(graph->node(ni).is_equality_node()) {
               if(NULL != pOut)
                 varsHN.push_back(ilp::_getNodeVar(prob, ni));
-              
+
             } else {
               (*pLog) << "<no-hypernode-found />";
               fAbort = true;
-              
+
             }
-            
+
           } else {
             for(auto hn: *pHypernodes) {
               if(unihns.end() != unihns.find(hn)) continue;
-          
+
               if(NULL != pOut)
                 varsHN.push_back(ilp::_getHypernodeVar(prob, hn));
             }
           }
-          
+
           // Create OR-conditioned indicator that becomes 1 iff at least
           // one hypernode related to the node is hypothesized.
           if(!fAbort && NULL != pOut) {
             vars.push_back(util::createConditionedIndicator(prob, varsHN, std::vector<int>(varsHN.size(), 1), false));
-            
+
             for(auto v: varsHN) {
               (*pLog) << prob->variable(v).name() << " or ";
             }
           }
-          
+
           (*pLog) << "</node>" << std::endl;
         }
 
@@ -176,19 +224,19 @@ bool _getGoldSetsVars(const pg::proof_graph_t *graph, ilp::ilp_problem_t *prob, 
         // are true.
         if(!fAbort && NULL != pOut)
           pOut->push_back(util::createConditionedIndicator(prob, vars, std::vector<int>(vars.size(), 1), true, "cond"));
-      
+
         numFound++;
         (*pLog) << "</proofgraph-checking>" << std::endl;
       }
-      
+
       (*pLog) << "</pattern>" << std::endl;
-      
+
       return true;
     });
 
   if(0 == numFound)
     (*pLog) << "<no-match />" << std::endl;
-  
+
   return numFound > 0;
 }
 
@@ -210,7 +258,7 @@ public:
     for(int k=0; k<K; k++) {
       std::vector<ilp::ilp_solution_t> sols;
       ilp_solver()->execute(&sols);
-    
+
       auto sol = sols[0];
       sol.print_graph();
 
@@ -220,46 +268,50 @@ public:
       const pg::proof_graph_t *graph = get_latent_hypotheses_set();
       hash_set<pg::hypernode_idx_t>    unihns;
 
-      // Retrieve set of edges representing unification.
-      for(auto e: graph->edges()) {
-        if(e.is_unify_edge()) unihns.insert(e.tail());
-      }
-    
       const std::vector<lf::logical_function_t> &lfsGold = stLabel.storage().at(util::getObsShortName(parsed_inputs.at(idx).name)).lfs();
-    
+
       for(auto &lfGold: lfsGold)
         (*pLog) << "<label>" << lfGold.to_string() << "</label>" << std::endl;
-    
+
       // Get the feature vector of our best hypothesis.
       ilp::ilp_problem_t      *prob  = ((ilp::loglinear_converter_t*)ilp_convertor())->getILPProblem();
-    
+
       util::sparse_vector_t  vGold;
       std::vector<literal_t> lfSolGold;
-  
+
       pLLConv->getSolutionFeatureVector(sol, &vGold);
       util::solutionToLiterals(graph, prob, sol, &lfSolGold);
 
       (*pLog) << "<logical-form>" + util::literalsToString(lfSolGold) << "</logical-form>" << std::endl;
       (*pLog) << "<vector>"; _printVector(vGold, &std::cout); (*pLog) << "</vector>" << std::endl;
-  
+
       // If the best hypothesis = yi, then we want the best hypothesis not
       // including yi. Otherwise (the best hypothesis != yi), then we want
       // the best hypothesis including yi.
-      int numCorrects = 0;
+      int numCorrects = 0, numTotal = 0;
 
-      (*pLog) <<  "<label-matching-log>" << std::endl;
-      
+      (*pLog) << "<result-check-log>" << std::endl;
+
       for(auto &lfGold: lfsGold) {
-        if(util::doesSolutionContains(get_latent_hypotheses_set(),
-                                      lfSolGold, lfGold)) numCorrects++;
+        std::vector<literal_t> lsGold;
+        util::lfToSetOfLiterals(lfGold, &lsGold);
+
+        (*pLog) << "<find-label label=\"" << lfGold.to_string() << "\">" << std::endl;
+
+        numCorrects += _getGoldSetsVars(graph, prob, unihns, lfGold, NULL, flag("learn_exclude_transieq"), &sol, pLog);
+        numTotal += lsGold.size();
+
+        (*pLog) << "</find-label>" << std::endl;
+
       }
 
-      (*pLog) << "</label-matching-log>" << std::endl;
-      (*pLog) <<  "<correct>" << numCorrects << "</correct>" << std::endl;
+      (*pLog) << "</result-check-log>" << std::endl;
+
+      (*pLog) <<  "<result max=\"" << numTotal << "\">" << numCorrects << "</result>" << std::endl;
 
       if(k+1 != K) {
         (*pLog) <<  "<constraint-of-next-solution>" << std::endl;
-        
+
         // Impose constraint.
         for(auto node: graph->nodes()) {
           if(node.literal().predicate.substr(0, 5) == "will-" && prob->node_is_active(sol, node.index()) && node.type() != pg::NODE_OBSERVABLE) {
@@ -267,10 +319,10 @@ public:
             util::forceILPvarval(prob, ilp::_getNodeVar(prob, node.index()), 0);
           }
         }
-        
+
         (*pLog) <<  "</constraint-of-next-solution>" << std::endl;
       }
-      
+
       (*pLog) << "</result>" << std::endl;
     }
   }
@@ -284,8 +336,8 @@ public:
     set_input(parsed_inputs[idx]);
 
     execute_enumerator();
-  
-    // 
+
+    //
     const pg::proof_graph_t          *graph  = get_latent_hypotheses_set();
     hash_set<pg::hypernode_idx_t>    unihns;
 
@@ -293,7 +345,7 @@ public:
     for(auto e: graph->edges()) {
       if(e.is_unify_edge()) unihns.insert(e.tail());
     }
-  
+
     // Obtain the ground truth of this observation.
     if(stLabel.storage().end() == stLabel.storage().find(util::getObsShortName(parsed_inputs.at(idx).name))) {
       (*pLog) << "<label-status>no-annotation</label-status>" << std::endl;
@@ -303,11 +355,11 @@ public:
     const std::vector<lf::logical_function_t> &lfsGold = stLabel.storage().at(util::getObsShortName(parsed_inputs.at(idx).name)).lfs();
     int                                        numHits = 0;
     std::ostringstream                         trash;
-    
+
     for(auto &lfGold: lfsGold) {
       (*pLog) << "<label>" << lfGold.to_string() << "</label>" << std::endl;
-      
-      if(_getGoldSetsVars(graph, NULL, unihns, lfGold, NULL, flag("learn_exclude_transieq"), &trash))
+
+      if(0 < _getGoldSetsVars(graph, NULL, unihns, lfGold, NULL, flag("learn_exclude_transieq"), NULL, &trash))
         numHits++;
     }
 
@@ -322,79 +374,92 @@ public:
 
     if(flag("learn_label_check_only") && !flag("learn_force_predict"))
       return -1;
-    
+
     // Perform inference.
     std::cerr << "Timeout of sol: " << this->timeout_sol() << std::endl;
-    
+
     execute_convertor();
 
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
     execute_solver();
     std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1);
-    
+
     (*pLog) << "<current-prediction>" << std::endl;
     ilp::ilp_problem_t               *prob   = ((ilp::loglinear_converter_t*)ilp_convertor())->getILPProblem();
-  
+
     auto sol = get_solutions()[0];
-    
+
     if(flag("learn_print_ilp"))
       prob->print(pLog);
     sol.print_graph(pLog);
 
     // Get the feature vector of our best hypothesis.
-    util::sparse_vector_t  vGold;
-    std::vector<literal_t> lfSolGold;
-  
-    pLLConv->getSolutionFeatureVector(sol, &vGold);
-    util::solutionToLiterals(graph, prob, sol, &lfSolGold);
+    util::sparse_vector_t  vCompetitor;
+    std::vector<literal_t> lfSolCompetitor;
 
-    (*pLog) << "<logical-form>" + util::literalsToString(lfSolGold) << "</logical-form>" << std::endl;
-    (*pLog) << "<vector>"; _printVector(vGold, pLog); (*pLog) << "</vector>" << std::endl;
-  
+    pLLConv->getSolutionFeatureVector(sol, &vCompetitor);
+    util::solutionToLiterals(graph, prob, sol, &lfSolCompetitor);
+
+    (*pLog) << "<logical-form>" + util::literalsToString(lfSolCompetitor) << "</logical-form>" << std::endl;
+    (*pLog) << "<vector>"; _printVector(vCompetitor, pLog); (*pLog) << "</vector>" << std::endl;
+
     // If the best hypothesis = yi, then we want the best hypothesis not
     // including yi. Otherwise (the best hypothesis != yi), then we want
     // the best hypothesis including yi.
-    int numCorrects = 0;
+    int numCorrects = 0, numTotal = 0;
 
-    for(auto &lfGold: lfsGold)
-      if(util::doesSolutionContains(get_latent_hypotheses_set(),
-                                    lfSolGold, lfGold)) numCorrects++;
+    (*pLog) << "<result-check-log>" << std::endl;
 
-    (*pLog) <<  "<result>" << numCorrects << "</result>" << std::endl;
+    for(auto &lfGold: lfsGold) {
+      std::vector<literal_t> lsGold;
+      util::lfToSetOfLiterals(lfGold, &lsGold);
+
+      (*pLog) << "<find-label label=\"" << lfGold.to_string() << "\">" << std::endl;
+
+      numCorrects += _getGoldSetsVars(graph, prob, unihns, lfGold, NULL, flag("learn_exclude_transieq"), &sol, pLog);
+      numTotal += lsGold.size();
+
+      (*pLog) << "</find-label>" << std::endl;
+
+    }
+
+    (*pLog) << "</result-check-log>" << std::endl;
+
+    (*pLog) <<  "<result max=\"" << numTotal << "\">" << numCorrects << "</result>" << std::endl;
     (*pLog) << "</current-prediction>" << std::endl;
 
     if(sol.type() != ilp::SOLUTION_OPTIMAL || sol.is_timeout() || time_span.count() > param_float("learn_timeout", 9999)) {
       (*pLog) << "<inexact-solution />" << std::endl;
       return 0;
     }
-    
-    if("structured_perceptron" == param("learn_algo") && 0 < numCorrects)
+
+    if("structured_perceptron" == param("learn_algo") && numTotal == numCorrects)
       return 0;
-      
+
     // Create ILP variables expressing inclusion of gold literals.
     (*pLog) << "<latent-variable-completion>" << std::endl;
-    
+
     std::vector<ilp::variable_idx_t> vCondLabelSatisfied;
 
     for(auto &lfGold: lfsGold) {
       std::vector<ilp::variable_idx_t> vCondGoldSets;
-    
+
       (*pLog) << "<find-label label=\"" << lfGold.to_string() << "\">" << std::endl;
-      
-      if(_getGoldSetsVars(graph, prob, unihns, lfGold, &vCondGoldSets, flag("learn_exclude_transieq"), pLog))
+
+      if(0 < _getGoldSetsVars(graph, prob, unihns, lfGold, &vCondGoldSets, flag("learn_exclude_transieq"), NULL, pLog))
         vCondLabelSatisfied.push_back(util::createConditionedIndicator(prob, vCondGoldSets, std::vector<int>(vCondGoldSets.size(), 1), false));
 
       (*pLog) << "</find-label>" << std::endl;
     }
 
-    ilp::variable_idx_t varFI = numCorrects > 0 ?
+    ilp::variable_idx_t varFI = numTotal == numCorrects ?
       util::createConditionedIndicator(prob, vCondLabelSatisfied, std::vector<int>(vCondLabelSatisfied.size(), -1), true) : // Ignore yi.
       util::createConditionedIndicator(prob, vCondLabelSatisfied, std::vector<int>(vCondLabelSatisfied.size(),  1), false);  // Keep watching yi.
     util::forceILPvarval(prob, varFI, 1.0);
-    
+
     //get_ilp_problem()->print(pLog);
-  
+
     // Ok, let us try again with the new constraint.
     std::vector<ilp::ilp_solution_t> sols;
     //pLLConv->adjustScores(-1.0);
@@ -402,27 +467,27 @@ public:
 
     if(flag("learn_print_ilp"))
       prob->print(pLog);
-    
+
     sols[0].print_graph(pLog);
     //sols[0].print(pLog);
-  
+
     // Get the feature vector of the competitor.
-    util::sparse_vector_t  vCompetitor;
-    std::vector<literal_t> lfSolCompetitor;
-  
-    pLLConv->getSolutionFeatureVector(sols[0], &vCompetitor);
-    util::solutionToLiterals(graph, prob, sols[0], &lfSolCompetitor);
-  
-    (*pLog) << "<logical-form>" + util::literalsToString(lfSolCompetitor) << "</logical-form>" << std::endl;
-    (*pLog) << "<vector>"; _printVector(vCompetitor, pLog); (*pLog) << "</vector>" << std::endl;
+    util::sparse_vector_t  vGold;
+    std::vector<literal_t> lfSolGold;
+
+    pLLConv->getSolutionFeatureVector(sols[0], &vGold);
+    util::solutionToLiterals(graph, prob, sols[0], &lfSolGold);
+
+    (*pLog) << "<logical-form>" + util::literalsToString(lfSolGold) << "</logical-form>" << std::endl;
+    (*pLog) << "<vector>"; _printVector(vGold, pLog); (*pLog) << "</vector>" << std::endl;
     (*pLog) << "</latent-variable-completion>" << std::endl;
 
     if(sols[0].type() != ilp::SOLUTION_OPTIMAL)
       return 0;
-    
+
     // Update the weight vector.
-    if(0 == numCorrects) std::swap(vCompetitor, vGold);
-  
+    if(numTotal == numCorrects) std::swap(vCompetitor, vGold);
+
     (*pLog) << "<weight-update>" << std::endl;
 
     float loss;
@@ -435,16 +500,16 @@ public:
                                      scw::SCW_I,
                                      stFt,
                                      pLog);
-      
+
     } else if("structured_perceptron" == param("learn_algo")) {
       loss = sp::updateWeightVector(&vecMean, vGold, vCompetitor,
                                     param_float("learn_eta", fDefaultEta),
                                     stFt,
                                     pLog);
-      
+
     }
-      
-    
+
+
     (*pLog) << "<loss>" << loss << "</loss>" << std::endl;
     (*pLog) << "</weight-update>" << std::endl;
 
@@ -462,7 +527,7 @@ int main(int argc, char* argv[]) {
   //
   print_console("Learnign module for log-linear abduction");
   print_console("  for Phillip ver. " + phillip_main_t::VERSION);
-    
+
   bin::parse_options(argc, argv, (phillip_main_t*)&phillip, &config, &inputs);
 
   // Force ILP converter to be the log-linear converter.
@@ -477,7 +542,7 @@ int main(int argc, char* argv[]) {
   storage_t<sparse_vector_storage_t>    stFeatureVector(phillip.param("feature_vector"));
   storage_t<std::string>                stFeatureTranslator(phillip.param("feature_translator"));
   storage_t<logical_function_storage_t> stLabel(phillip.param("label"));
-  
+
   print_console("done.");
 
   //
@@ -489,7 +554,7 @@ int main(int argc, char* argv[]) {
 
   //
   bin::preprocess(config, (phillip_main_t*)&phillip);
-  
+
   std::vector<lf::input_t> parsed_inputs;
   proc::processor_t processor;
   bool do_parallel_inference(phillip.flag("do_parallel_inference"));
@@ -498,7 +563,7 @@ int main(int argc, char* argv[]) {
 
   if("" != phillip.param("learn_weight")) {
     print_console("Loading weights from "+ phillip.param("learn_weight") +"...");
-    
+
     std::ifstream ifsWeight(phillip.param("learn_weight").c_str());
     std::string   fk, fm;
     int           n;
@@ -507,19 +572,19 @@ int main(int argc, char* argv[]) {
       while(ifsWeight >> n >> fk >> fm) {
         if(-1 != phillip.param_int("use_iter", -1) && n != phillip.param_int("use_iter", -1))
           continue;
-        
+
         vecMean[atoi(fk.c_str())] = atof(fm.c_str());
       }
-      
+
     } else {
       while(ifsWeight >> fk >> fm) {
         vecMean[atoi(fk.c_str())] = atof(fm.c_str());
       }
-      
-    }      
+
+    }
     print_console("done. " + format("Weight vector is now %d dimension.", vecMean.size()));
   }
-  
+
   print_console("Loading observations...");
 
   processor.add_component(new proc::parse_obs_t(&parsed_inputs));
@@ -536,42 +601,47 @@ int main(int argc, char* argv[]) {
     static std::ofstream ofsLog(phillip.param("learn_log").c_str(), std::ios::out);
     pLog = (std::ostream*)&ofsLog;
   }
-  
+
   (*pLog) << "<phillip-learn>" << std::endl;
-  
+
   if (kb::knowledge_base_t::instance()->is_valid_version()) {
-    if(do_test) {      
+    if(do_test) {
       phillip.write_header();
-      
+
       for (int i = 0; i < parsed_inputs.size(); ++i) {
         const lf::input_t &ipt = parsed_inputs.at(i);
-            
+
         std::string obs_name = ipt.name;
         if (obs_name.rfind("::") != std::string::npos)
           obs_name = obs_name.substr(obs_name.rfind("::") + 2);
-            
+
         if (phillip.is_target(obs_name) and not phillip.is_excluded(obs_name)) {
+          std::cout << format("<testing observation=\"%s\">", obs_name.c_str()) << std::endl;
+
           phillip.testing(stFeatureVector, stLabel, pLLConv, parsed_inputs, i, vecMean);
           kb::knowledge_base_t::instance()->clear_distance_cache();
+
+          std::cout << "</testing>" << std::endl;
+
         }
       }
 
       phillip.write_footer();
-      
+
     } else {
       for(int n=0; n<phillip.param_int("learn_iter", 1); n++) {
         int numUpdates = 0;
         hash_set<std::string> npgls;
-        
+
         for(int i = 0; i < parsed_inputs.size(); ++i) {
           const lf::input_t &ipt = parsed_inputs.at(i);
-            
+
           std::string obs_name = ipt.name;
           if(obs_name.rfind("::") != std::string::npos)
             obs_name = obs_name.substr(obs_name.rfind("::") + 2);
 
           if(phillip.is_target(obs_name) and not phillip.is_excluded(obs_name) and npgls.count(obs_name) == 0) {
-            
+
             // Step forward!
             (*pLog) << format("<round iteration=\"%d\" observation=\"%s\">", 1+n, obs_name.c_str()) << std::endl;
             int ret = phillip.learn(stFeatureVector, stFeatureTranslator, stLabel, pLLConv, parsed_inputs, i, vecMean, vecVariance, pLog);
@@ -579,7 +649,7 @@ int main(int argc, char* argv[]) {
             (*pLog) << "</round>" << std::endl;
 
             if(-1 == ret) npgls.insert(obs_name);
-            
+
             kb::knowledge_base_t::instance()->clear_distance_cache();
           }
         }
@@ -588,12 +658,12 @@ int main(int argc, char* argv[]) {
 
         if(0 == numUpdates) break;
       }
-      
+
     }
   }
 
   (*pLog) << "</phillip-learn>" << std::endl;
-  
+
   if(&std::cout != pLog)
-    ((std::ofstream*)pLog)->close();  
+    ((std::ofstream*)pLog)->close();
 }

@@ -18,17 +18,17 @@ def _createTree(xml):
 
 	def _deco(_x, mode):
 		return "<code>%s</code>" % _x if mode else "%s" % _x
-		
+
 	for expl in xml.xpath("./literals/literal"):
 		nodes[expl.attrib["id"]] = []
 		n2repr[expl.attrib["id"]] = expl.text
 		n2prop[expl.attrib["id"]] = expl
-		
+
 	for expl in xml.xpath("./explanations/explanation"):
 		for tailNode in _getNodeIDs(expl.attrib["tail"]):
 			for headNode in _getNodeIDs(expl.attrib["head"]):
 				nodes[headNode] += ["e%s" % expl.attrib["id"]]
-				
+
 			nodes["e%s" % expl.attrib["id"]] += [tailNode]
 
 	for node, nodeParents in nodes.iteritems():
@@ -37,7 +37,7 @@ def _createTree(xml):
 				node,
 				_deco(n2repr.get(node, node), n2prop.has_key(node) and "yes" == n2prop[node].attrib["active"]),
 				)]
-			
+
 		else:
 			for np in nodeParents:
 				ret += ["{id: 'n%s', text: '%s', state: {%s}, parent: 'n%s'}" % (
@@ -46,9 +46,9 @@ def _createTree(xml):
 					"selected: true" if n2prop.has_key(node) and "yes" == n2prop[node].attrib["active"] else "",
 					np
 				)]
-		
+
 	return ret
-	
+
 def html(fn, obs_name, itr, fvdict):
 	m = re.search("<round iteration=\"%s\" observation=\"%s\">(.*?)</round>" % (itr, obs_name), open(fn).read(), re.DOTALL)
 	xml = etree.parse(StringIO.StringIO("<phillip-learn>" + m.group(0) + "</phillip-learn>"))
@@ -56,7 +56,7 @@ def html(fn, obs_name, itr, fvdict):
 		fvdict = dict([tuple(x.split("\t")) for x in open(fvdict)])
 	else:
 		fvdict = {}
-		
+
 	# Counting the list of observations and iteration.
 	list_itr = xml.xpath("/phillip-learn/round[@observation='%s']/@iteration" % obs_name)
 	obs      = xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/current-prediction/proofgraph/literals/literal[@type='observable']/text()" % (obs_name, itr))
@@ -69,9 +69,12 @@ def html(fn, obs_name, itr, fvdict):
 	sc_cp     = xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/current-prediction/proofgraph" % (obs_name, itr))[0]
 	sc_lvc    = xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/latent-variable-completion/proofgraph" % (obs_name, itr))[0]
 
+	if 0 == len(vec_cp): vec_cp = ["0:0"]
+	if 0 == len(vec_lvc): vec_lvc = ["0:0"]
+
 	sc_cp     = "%s (%s)" % (sc_cp.attrib["objective"], sc_cp.attrib["state"])
 	sc_lvc    = "%s (%s)" % (sc_lvc.attrib["objective"], sc_lvc.attrib["state"])
-	
+
 	tree_cp = _createTree(xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/current-prediction/proofgraph" % (obs_name, itr))[0])
 	tree_lvc = _createTree(xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/latent-variable-completion/proofgraph" % (obs_name, itr))[0])
 
@@ -80,7 +83,7 @@ def html(fn, obs_name, itr, fvdict):
 
 	def _node2repr(_x):
 		return _x.attrib["target"] + ("" if "0" == _x.attrib["is_transitive_eq"] else " (TRANSEQ)")
-		
+
 	for lblno, find_label in enumerate(xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/latent-variable-completion/find-label" % (obs_name, itr))):
 		lms += ["<pre>%s. %s</pre>" % (1+lblno, find_label.attrib["label"])]
 		lms += ["<table class=\"table table-bordered\">"]
@@ -89,21 +92,21 @@ def html(fn, obs_name, itr, fvdict):
 		lms += ["<th>#</th>"]
 		lms += ["<th>Matched nodes</th>"]
 		lms += ["</tr>"]
-			
+
 		for patno, pat in enumerate(find_label.xpath("./pattern")):
 			lms += ["<tr>"]
 			lms += ["<th>%s</th>" % (1+patno)]
 			lms += ["<td><pre>%s</pre></td>" % ", ".join([_node2repr(x) for x in pat.xpath("./proofgraph-checking/node")])]
 			lms += ["</tr>"]
-				
+
 		lms += ["</table>"]
-			
+
 	# Weight updates.
 	wupdates = {}
-	
+
 	for upd in xml.xpath("/phillip-learn/round[@observation='%s' and @iteration=%s]/weight-update/update" % (obs_name, itr)):
 		wupdates[upd.attrib["id"]] = (upd.attrib["before_m"], upd.attrib["after_m"])
-	
+
 	lf_cp   = [x for x in lf_cp[0].strip().split(",") if not x.startswith("(!=")]
 	lf_lvc  = [x for x in lf_lvc[0].strip().split(",") if not x.startswith("(!=")]
 	vec_cp  = sorted(vec_cp[0].strip().split(" "), key=lambda x: int(x.split(":")[0]))
@@ -126,14 +129,14 @@ def html(fn, obs_name, itr, fvdict):
 		return "%s => %s" % x + (
 			"<span class=\"label label-danger\">UP!</span>" if float(x[0]) < float(x[1]) else \
 			"<span class=\"label label-info\">DOWN!</span>")
-		
-		
+
+
 	wupdates = [
 		"<tr><th>%s</th><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % (
 			fvdict.get(fk, fk), _labeling(vedict_cp.has_key(fk) and vedict_lvc.has_key(fk)), vedict_cp.get(fk, ""), vedict_lvc.get(fk, ""), _update(wupdates.get(fk, "")),
 		) for fk in fks
 		]
-	
+
 	dct = {
 		"lf_cp":        ", ".join(lf_cp),
 		"lf_lvc":       ", ".join(lf_lvc),
@@ -152,7 +155,7 @@ def html(fn, obs_name, itr, fvdict):
 		"sc_lvc":         sc_lvc,
 		"lms":           "".join(lms),
 		}
-	
+
 	return """
 <html>
 	<head>
@@ -169,7 +172,7 @@ def html(fn, obs_name, itr, fvdict):
 	<br />
 	<br />
 	<div class="container-fluid" style="margin: 10px">
-	
+
 	<h2><span class="label label-default">Observation</span></h2>
 	<pre>%(obs)s</pre>
 
@@ -191,7 +194,7 @@ def html(fn, obs_name, itr, fvdict):
 	<tr><th scope="row">Proof graph</th><td><div id="jstree_cp"></div></td><td><div id="jstree_lvc"></div></td></tr>
 	</tbody>
 	</table>
-	
+
 	<h2><span class="label label-default">Weight update</span></h2>
 	<table class="table table-bordered">
 	<thead>
@@ -207,11 +210,11 @@ def html(fn, obs_name, itr, fvdict):
 	%(weightupdate)s
 	</tbody>
 	</table>
-	
-	
+
+
 	<h2><span class="label label-default">Label matching log</span></h2>
 	%(lms)s
-	
+
 	</div>
 
 	<nav class="navbar navbar-inverse navbar-fixed-top">
@@ -230,7 +233,7 @@ def html(fn, obs_name, itr, fvdict):
 	$(function () { $('#jstree_cp').jstree(g_treeCp); });
 	$(function () { $('#jstree_lvc').jstree(g_treeLvc); });
 	</script>
-	
+
 	</body>
 </html>""" % dct
 

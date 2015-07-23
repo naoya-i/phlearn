@@ -7,27 +7,28 @@
 
 namespace phil
 {
- 
+
   /** A namespace about factories of linear-programming-problems. */
   namespace ilp
   {
     ilp::variable_idx_t _getNodeVar(ilp::ilp_problem_t *prob, pg::node_idx_t ni);
     ilp::variable_idx_t _getHypernodeVar(ilp::ilp_problem_t *prob, pg::hypernode_idx_t ni);
-      
+
     class loglinear_converter_t : public ilp_converter_t
     {
     private:
       const storage_t<sparse_vector_storage_t> &m_stFv;
       const util::sparse_vector_t& m_wv;
-    
+
+      mutable hash_map<std::string, int> m_fvIndex;
       mutable hash_map<ilp::variable_idx_t, util::sparse_vector_t> m_fvMap;
       mutable ilp::ilp_problem_t *m_prob;
 
       mutable hash_map<ilp::variable_idx_t, float> m_scores;
       mutable hash_set<ilp::variable_idx_t>        m_unifyExplanations;
-      
+
     public:
-    
+
     loglinear_converter_t(phillip_main_t *ptr, const util::sparse_vector_t &wv, const storage_t<sparse_vector_storage_t> &stFv)
       : ilp_converter_t(ptr), m_stFv(stFv), m_wv(wv) {}
       virtual ilp_converter_t* duplicate(phillip_main_t *ptr) const;
@@ -41,6 +42,11 @@ namespace phil
       const hash_map<ilp::variable_idx_t, float> &scores() const { return m_scores; };
       const hash_map<ilp::variable_idx_t, util::sparse_vector_t> &fvMap() const { return m_fvMap; };
       void getSolutionFeatureVector(ilp::ilp_solution_t &sol, util::sparse_vector_t *pOut) const;
+
+      void _family(const pg::proof_graph_t*) const;
+      void _features(const pg::proof_graph_t*) const;
+
+      void _injectFeature(util::sparse_vector_t*, const std::string&) const;
     };
 
     class loglinear_xml_decorator_t : public ilp::solution_xml_decorator_t
@@ -57,9 +63,7 @@ namespace phil
       const hash_map<pg::node_idx_t, ilp::variable_idx_t> m_node2asvar, m_node2acvar;
       const hash_map<ilp::variable_idx_t, util::sparse_vector_t>          m_fvMap;
     };
-    
+
   }
 
 }
-
-

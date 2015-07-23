@@ -14,7 +14,59 @@ namespace phil
     return ret;
   }
 
+  float _dotp(const util::sparse_vector_t &v1, const util::sparse_vector_t &v2) {
+    float ret = 0.0f;
+    for(auto it: v1) {
+      auto w = v2.find(it.first);
+      ret += (v2.end() != w ? w->second : 0.0) * it.second;
+    }
+    return ret;
+  }
+
   namespace ilp {
+    void loglinear_converter_t::_family(const pg::proof_graph_t* graph) const {
+      hash_map<std::string, std::vector<pg::node_idx_t> > identical;
+
+      for(auto n=0; n<graph->nodes().size(); n++)
+        identical[graph->node(n).literal().to_string()].push_back(n);
+
+      for(auto i: identical) {
+        if(i.second.size() == 1) continue;
+
+        for(auto j: i.second) {
+          for(auto k: i.second) {
+            if(j >= k) continue;
+
+            ilp::constraint_t con("", ilp::OPR_EQUAL, 0);
+            m_prob->add_constraint(con);
+
+          }
+        }
+      }
+    }
+
+    void loglinear_converter_t::_features(const pg::proof_graph_t* graph) const {
+      for(auto e=0; e<graph->edges().size(); e++) {
+        ilp::variable_idx_t v = m_prob->find_variable_with_edge(e);
+        kb::knowledge_base_t *pKB = kb::knowledge_base_t::instance();
+        const lf::axiom_t &axiom = pKB->get_axiom(graph->edge(e).axiom_id());
+
+        _injectFeature(&m_fvMap[v], axiom.func.to_string());
+        m_prob->variable(v).set_coefficient(_dotp(m_fvMap[v], m_wv));
+      }
+    }
+
+    void loglinear_converter_t::_injectFeature(util::sparse_vector_t* pOut, const std::string &key) const {
+      auto idx = m_fvIndex[key];
+
+      if(0 == idx) {
+        idx            = m_fvIndex.size();
+        m_fvIndex[key] = idx;
+      }
+
+      (*pOut)[idx] = 1;
+    }
+
     inline void _addFeatureVector(util::sparse_vector_t *pOut, const util::sparse_vector_t &sv, float fValue = -9999.0f) {
       for(auto fv: sv)
         (*pOut)[fv.first] += (fValue != -9999.0f ? fValue : fv.second);
@@ -67,7 +119,7 @@ namespace phil
         //_createFeatureVectorOfEq(graph, stFv, pOut, n);
 
       } else if(pg::NODE_OBSERVABLE == n.type()) {
-        _createFeatureVectorOfObservation(graph, stFv, pOutActive, n);
+        //_createFeatureVectorOfObservation(graph, stFv, pOutActive, n);
 
       } else {
 
@@ -96,8 +148,8 @@ namespace phil
               if(nVisit++ == 0)
                 _createFeatureVectorOfAxiom(graph, stFv, pOutActive, pKB->get_axiom(graph->edge(e).axiom_id()), graph->node(sn));
 
-              float fLocalImp = _getImportanceOfLiteralInAxiom(pKB->get_axiom(graph->edge(e).axiom_id()), graph->node(sn));
-              fCounter *= fIncreasingFactor * fLocalImp;
+              // // float fLocalImp = _getImportanceOfLiteralInAxiom(pKB->get_axiom(graph->edge(e).axiom_id()), graph->node(sn));
+              // fCounter *= fIncreasingFactor * fLocalImp;
 
               // print_console(format("  axiom: %s", pKB->get_axiom(graph->edge(e).axiom_id()).func.to_string().c_str()));
               // print_console(format("  importance: %f, (accum.: %f)", fLocalImp, fCounter));
@@ -116,15 +168,6 @@ namespace phil
       }
     }
 
-    float _inp(const util::sparse_vector_t &v1, const util::sparse_vector_t &v2) {
-      float ret = 0.0f;
-      for(auto it: v1) {
-        auto w = v2.find(it.first);
-        ret += (v2.end() != w ? w->second : 0.0) * it.second;
-      }
-      return ret;
-    }
-
     void _getScore(const pg::proof_graph_t *graph, const util::sparse_vector_t &wv, const storage_t<sparse_vector_storage_t> &stFv,
                    const pg::node_t &n,
                    util::sparse_vector_t *pOutFVassumed, util::sparse_vector_t *pOutFVactive, float *pOutAssumed, float *pOutActive,
@@ -139,9 +182,9 @@ namespace phil
 
       // Calculate the weighted score.
       if(NULL != pOutFVassumed) *pOutFVassumed = vas;
-      if(NULL != pOutAssumed)   *pOutAssumed   = _inp(vas, wv);
+      if(NULL != pOutAssumed)   *pOutAssumed   = _dotp(vas, wv);
       if(NULL != pOutFVactive)  *pOutFVactive  = vac;
-      if(NULL != pOutActive)    *pOutActive    = _inp(vac, wv);
+      if(NULL != pOutActive)    *pOutActive    = _dotp(vac, wv);
     }
 
     ilp::variable_idx_t _getNodeVar(ilp::ilp_problem_t *prob, pg::node_idx_t ni) {
@@ -178,19 +221,13 @@ namespace phil
       hash_map<pg::node_idx_t, ilp::variable_idx_t> uni2var;
       hash_map<pg::hypernode_idx_t, hash_set<pg::hypernode_idx_t> > hnpairs;
 
-      for(auto i=0; i<graph->edges().size(); i++) {
-        pg::hypernode_idx_t
-          head = graph->edge(i).head(),
-          tail = graph->edge(i).tail();
+      // h_N1=h_N2=...
+      _family(graph);
 
-        _doubleImplication(m_prob, graph, head);
-        _doubleImplication(m_prob, graph, tail);
-        _equalizeEdgeAndHN(m_prob, graph, i);
+      //
+      _features(graph);
 
-        if(!graph->edge(i).is_unify_edge() && -1 != head && -1 != tail)
-          hnpairs[tail].insert(head);
-
-      }
+      return m_prob;
 
       //
       // Make hypernodes having the same parent mutual exclusive. (Explanatory XOR)
